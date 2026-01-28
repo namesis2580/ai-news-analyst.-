@@ -8,16 +8,17 @@ from datetime import datetime
 # --- [핵심] Gmail 서버 설정 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- 안전장치: 데이터 세탁 ---
-def safe_str(data):
-    if data is None: return ""
-    return str(data).strip()
+# --- [초강력] 데이터 세탁 함수 (유령 문자 제거) ---
+def clean_text(text):
+    if text is None: return ""
+    # \xa0(투명 공백)을 일반 공백으로 바꾸고, 양쪽 공백 제거
+    return str(text).replace('\xa0', ' ').strip()
 
-# --- 설정 불러오기 ---
-GEMINI_API_KEY = safe_str(os.environ.get("GEMINI_API_KEY"))
-EMAIL_USER = safe_str(os.environ.get("EMAIL_USER"))      # 보내는 사람 (Gmail 주소)
-EMAIL_PASSWORD = safe_str(os.environ.get("EMAIL_PASSWORD")) # 보내는 사람 비번 (Gmail 앱 비밀번호)
-EMAIL_RECEIVER = safe_str(os.environ.get("EMAIL_RECEIVER")) # 받는 사람 (Outlook 주소)
+# --- 설정 불러오기 (세탁기 돌림) ---
+GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
+EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
+EMAIL_PASSWORD = clean_text(os.environ.get("EMAIL_PASSWORD"))
+EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
 
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
@@ -32,9 +33,9 @@ def fetch_news():
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
             for entry in feed.entries[:15]:
-                title = safe_str(getattr(entry, 'title', 'No Title'))
-                link = safe_str(getattr(entry, 'link', 'No Link'))
-                pubDate = safe_str(getattr(entry, 'published', 'No Date'))
+                title = clean_text(getattr(entry, 'title', 'No Title'))
+                link = clean_text(getattr(entry, 'link', 'No Link'))
+                pubDate = clean_text(getattr(entry, 'published', 'No Date'))
                 all_news.append(f"Source: {source} | Title: {title} | Link: {link} | Date: {pubDate}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
@@ -42,22 +43,18 @@ def fetch_news():
 
 def analyze_news(news_list):
     print("Configuring AI...")
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    news_text = "\n".join(news_list)
-    
-    # 1. Screener (Flash)
-    print("Screening news...")
     try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        news_text = "\n".join(news_list)
+        
+        # 1. Screener (Flash)
+        print("Screening news...")
         flash_model = genai.GenerativeModel('gemini-1.5-flash')
         screening_prompt = f"Select top 10 critical financial news:\n{news_text[:40000]}"
         screened_result = flash_model.generate_content(screening_prompt).text
-    except Exception as e:
-        return f"Error in screening: {e}"
 
-    # 2. Analyst (Pro)
-    print("Analyzing news...")
-    try:
+        # 2. Analyst (Pro)
+        print("Analyzing news...")
         pro_model = genai.GenerativeModel('gemini-1.5-pro')
         analysis_prompt = f"""
         Write a financial briefing in Korean based on:
@@ -68,7 +65,7 @@ def analyze_news(news_list):
         3. Strategic Action Plan
         """
         final_report = pro_model.generate_content(analysis_prompt).text
-        return safe_str(final_report)
+        return clean_text(final_report)
     except Exception as e:
         return f"Error in analysis: {e}"
 
@@ -76,7 +73,8 @@ def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
     msg = EmailMessage()
-    msg.set_content(report_body)
+    # 본문 인코딩을 UTF-8로 강제 고정
+    msg.set_content(report_body, charset='utf-8')
     
     msg['Subject'] = f"Daily AI Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg['From'] = EMAIL_USER
@@ -91,7 +89,8 @@ def send_email(report_body):
             print("✅ Email sent successfully!")
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
-        print(f"Debug Info -> Server: {SMTP_SERVER}, User: {EMAIL_USER}")
+        # 디버깅: 값의 길이와 타입을 출력해서 숨은 문자 확인
+        print(f"Debug -> User Len: {len(EMAIL_USER)}, Receiver Len: {len(EMAIL_RECEIVER)}")
 
 if __name__ == "__main__":
     news_data = fetch_news()
