@@ -12,7 +12,7 @@ EMAIL_USER = os.environ["EMAIL_USER"]
 EMAIL_PASSWORD = os.environ["EMAIL_PASSWORD"]
 EMAIL_RECEIVER = os.environ["EMAIL_RECEIVER"]
 
-# --- RSS 피드 주소 (가장 빠르고 무료인 소스들) ---
+# --- RSS 피드 주소 ---
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
     "Google News (Business)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
@@ -23,89 +23,87 @@ def fetch_news():
     print("Collecting news...")
     all_news = []
     for source, url in RSS_URLS.items():
-        feed = feedparser.parse(url)
-        print(f"Fetched {len(feed.entries)} articles from {source}")
-        for entry in feed.entries[:20]: # 소스당 최신 20개만 (너무 옛날거 제외)
-            title = entry.title
-            link = entry.link
-            summary = entry.summary if 'summary' in entry else ""
-            pubDate = entry.published if 'published' in entry else ""
-            all_news.append(f"Source: {source} | Title: {title} | Link: {link} | Date: {pubDate}")
+        try:
+            feed = feedparser.parse(url)
+            print(f"Fetched {len(feed.entries)} articles from {source}")
+            for entry in feed.entries[:20]:
+                # 제목이나 링크가 없을 경우 대비
+                title = getattr(entry, 'title', 'No Title')
+                link = getattr(entry, 'link', 'No Link')
+                pubDate = getattr(entry, 'published', 'No Date')
+                
+                # 데이터가 바이트(bytes)로 들어올 경우 강제로 문자열(str)로 변환
+                if isinstance(title, bytes): title = title.decode('utf-8', 'ignore')
+                if isinstance(link, bytes): link = link.decode('utf-8', 'ignore')
+                
+                all_news.append(f"Source: {source} | Title: {title} | Link: {link} | Date: {pubDate}")
+        except Exception as e:
+            print(f"Error fetching {source}: {e}")
+            continue
     return all_news
 
 def analyze_news(news_list):
-    # Gemini 설정
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 모델 1: Screener (Gemini) - 물량 처리용
-    # 수백 개의 뉴스 중 핵심만 골라내는 역할
+    # 모델 1: Screener
     print("Screening news with Gemini")
-    flash_model = genai.GenerativeModel('gemini')
-    
-    news_text = "\n".join(news_list)
-    
-    screening_prompt = f"""
-    You are a professional financial news screener.
-    Here are {len(news_list)} recent financial news headlines.
-    
-    Task:
-    1. Filter out duplicates, ads, and noise.
-    2. Select the TOP 10 most critical stories that impact global markets, interest rates, or major tech stocks right now.
-    3. Output ONLY the selected 10 news items in a clean list format.
-    
-    News Data:
-    {news_text}
-    """
-    
     try:
+        flash_model = genai.GenerativeModel('gemini')
+        news_text = "\n".join(news_list)
+        screening_prompt = f"""
+        You are a professional financial news screener.
+        Filter out duplicates and select the TOP 10 most critical stories.
+        Output ONLY the list.
+        News Data:
+        {news_text[:50000]} 
+        """
+        # 입력 데이터가 너무 길 경우를 대비해 50000자 제한
         screened_result = flash_model.generate_content(screening_prompt).text
     except Exception as e:
         return f"Error in screening: {e}"
 
-    # 모델 2: Analyst (Gemini) - 심층 분석용
-    # 골라낸 뉴스를 분석하여 보고서 작성
+    # 모델 2: Analyst
     print("Analyzing with Gemini")
-    pro_model = genai.GenerativeModel('gemini')
-    
-    analysis_prompt = f"""
-    You are the 'Chief Strategic Architect', a top-tier financial analyst.
-    
-    Input Data (Top 10 Filtered News):
-    {screened_result}
-    
-    Mandate:
-    Write a daily executive briefing for me.
-    1. **Market Sentiment:** (Bullish/Bearish/Neutral) based on these news.
-    2. **Key Events:** Summarize the 3 most important events and *why* they matter.
-    3. **Strategic Implication:** What should an investor do? (Risk on/off, sectors to watch).
-    4. **Original Sources:** List the original links for the top 3 stories.
-    
-    Format: Use Markdown. Be concise, professional, and insightful. Translate the final output into Korean.
-    """
-    
     try:
+        pro_model = genai.GenerativeModel('gemini')
+        analysis_prompt = f"""
+        You are the 'Chief Strategic Architect'.
+        Write a daily executive briefing based on these news:
+        {screened_result}
+        
+        Format:
+        1. Market Sentiment (Bullish/Bearish)
+        2. Top 3 Key Events & Why
+        3. Action Plan
+        
+        Translate output to Korean.
+        """
         final_report = pro_model.generate_content(analysis_prompt).text
         return final_report
     except Exception as e:
         return f"Error in analysis: {e}"
 
 def send_email(report_body):
-    print("Sending email...")
+    print("Sending email via Outlook...")
     msg = MIMEMultipart()
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
     msg['Subject'] = f"🚀 Daily AI Financial Report - {datetime.now().strftime('%Y-%m-%d')}"
 
-    # Markdown을 HTML로 변환하면 좋지만, 간단하게 텍스트로 보냄
-    msg.attach(MIMEText(report_body, 'plain'))
+    # [핵심 수정] 본문을 강제로 문자열(str)로 변환하고 UTF-8 인코딩 명시
+    if not isinstance(report_body, str):
+        report_body = str(report_body)
+    
+    msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
 
     try:
+        # Outlook SMTP 서버
         server = smtplib.SMTP('smtp.outlook.com', 587)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("Email sent successfully!")
+        print("Outlook Email sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
