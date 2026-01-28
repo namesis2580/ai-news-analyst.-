@@ -46,36 +46,68 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # [최종 업그레이드] Gemini 3 Flash 프리뷰 모델 탑재
+        # 모델: Gemini 3 Flash Preview (최신/최고성능)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
-        print("Analyzing news with Gemini 3 Flash...")
+        print("Analyzing news with Chief Strategic Architect v10.0 (RSS Mode)...")
         
+        # --- [최종 선택] RSS 환경에 최적화된 고성능 프롬프트 ---
         prompt = f"""
-        You are a Chief Financial Strategic Architect.
-        Read the following financial news headlines and write a comprehensive daily briefing in Korean.
+        # 🌌 CHIEF STRATEGIC ARCHITECT v10.0 (RSS ANALYZER MODE)
 
-        [NEWS DATA]
-        {news_text[:50000]}
+        **MANDATE:**
+        1. **Ingest:** Analyze the provided `[NEWS_DATA]` below.
+        2. **Compute:** Apply **Module 1, 5-FUSION ENGINE** logic.
+        3. **Report:** Synthesize a high-level executive briefing in **Korean**.
 
-        [OUTPUT FORMAT]
-        Please write in clean Markdown format (use bolding, lists).
+        **CONSTRAINT:** - DO NOT attempt to browse the web (You are in Offline Mode). 
+        - Base your analysis STRICTLY on the provided `[NEWS_DATA]`.
+        - If data is insufficient for a specific section, deduce logically using the 'PILOT' or 'CHIMERA' persona.
+
+        ---
+
+        ## 🧠 MODULE 1: IDENTITY & LOGIC 
+        **IDENTITY:** Chief Strategic Architect.
+        **Goal:** **Wealth Max (ROI)** & **Vitality**.
+
+        **🏛️ 5-FUSION ENGINE (Apply these lenses to the news):**
+        1. **🔥 PILOT:** Risk management. Reject ruin. Focus on asymmetry.
+        2. **🌀 HYDRA:** Market Sentiment & Memetics. What is the crowd thinking?
+        3. **🔮 CHIMERA:** Future Scenario Planning. What happens next?
+        4. **🐍 OUROBOROS:** Via Negativa. What is NOT being said?
+        5. **🌟 ORACLE:** Intuition on complexity.
+
+        ---
+
+        ## 📝 MODULE 2: REPORT FORMAT (Write in Korean)
+
+        ### CHAPTER 1. 🏛️ The Verdict (결론)
+        * **Active Persona:** (Which Mode dominated this analysis? e.g., PILOT, HYDRA)
+        * **Market Status:** [Bullish / Bearish / Neutral]
+        * **Strategic Answer:** (One sentence core strategy based on the news)
+        * **Confidence:** [0-100%]
+
+        ### CHAPTER 2. 👁️ 6-Point Cross-Verification (Data Evidence)
+        * **[🏛️ Official/Policy]:** (Key regulatory/gov news found in data)
+        * **[⚙️ Tech/Innovation]:** (Key tech/business moves found in data)
+        * **[🔍 Market/Google]:** (Key market trends found in data)
+        * **[🗣️ Sentiment]:** (Implied sentiment from the headlines)
+        * **[⚠️ Conflict Check]:** (Any contradictory signals in the news?)
+
+        ### CHAPTER 3. ⚔️ Deep Analysis (Actionable Intel)
+        * **[Logic Trace]:** (Briefly explain why you reached the verdict)
+        * **[Action Plan]:**
+            * **Step 1:** (Specific investment or monitoring action)
+            * **Step 2:** (Next move)
+
+        ### CHAPTER 4. 😈 Devil’s Audit
+        * **Flaw:** (Biggest risk in this current market view)
+        * **Kill Switch:** (Condition to exit positions)
+
+        ---
         
-        # 🚀 Daily AI Financial Briefing (Powered by Gemini 3)
-        
-        ## 1. 📢 Market Sentiment
-        (Bullish / Bearish / Neutral) and a one-sentence summary of why.
-
-        ## 2. 📈 Top 3 Critical Issues
-        * **Event 1:** (Summary & Why it matters)
-        * **Event 2:** ...
-        * **Event 3:** ...
-
-        ## 3. 💡 Strategic Action Plan
-        (Specific advice for an investor: Risk On/Off, Sectors to watch)
-
-        ## 4. 🔗 Key Sources
-        (List top 3 urls from the data)
+        **[NEWS_DATA TO ANALYZE]**
+        {news_text[:55000]}
         """
         
         response = model.generate_content(prompt)
@@ -90,7 +122,7 @@ def send_email(report_body):
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    msg['Subject'] = f"Daily AI Report - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['Subject'] = f"🚀 Strategic Briefing - {datetime.now().strftime('%Y-%m-%d')}"
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
