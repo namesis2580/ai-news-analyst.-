@@ -14,15 +14,16 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3  # v2 -> v3 업그레이드
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4 # v2 -> v4 업그레이드
       with:
-        python-version: '3.9'
+        python-version: '3.11' # 3.9 -> 3.11 (핵심 업그레이드)
 
     - name: Install libraries
       run: |
+        pip install --upgrade pip
         pip install feedparser google-generativeai
 
     - name: Run Report Generator
