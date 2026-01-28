@@ -6,17 +6,24 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-# --- 설정 (Secrets에서 불러옴) ---
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-EMAIL_USER = os.environ["EMAIL_USER"]
-EMAIL_PASSWORD = os.environ["EMAIL_PASSWORD"]
-EMAIL_RECEIVER = os.environ["EMAIL_RECEIVER"]
+# --- 안전장치: 모든 데이터를 무조건 문자열(str)로 변환하는 함수 ---
+def safe_str(data):
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode('utf-8', 'ignore')
+    return str(data)
+
+# --- 설정 (Secrets에서 불러오되, 강제로 문자열 변환) ---
+GEMINI_API_KEY = safe_str(os.environ.get("GEMINI_API_KEY"))
+EMAIL_USER = safe_str(os.environ.get("EMAIL_USER"))
+EMAIL_PASSWORD = safe_str(os.environ.get("EMAIL_PASSWORD"))
+EMAIL_RECEIVER = safe_str(os.environ.get("EMAIL_RECEIVER"))
 
 # --- RSS 피드 주소 ---
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
-    "Google News (Business)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
-    "Investing.com": "https://www.investing.com/rss/news.rss"
+    "Google News": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
 }
 
 def fetch_news():
@@ -26,16 +33,13 @@ def fetch_news():
         try:
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
-            for entry in feed.entries[:20]:
-                # 제목이나 링크가 없을 경우 대비
-                title = getattr(entry, 'title', 'No Title')
-                link = getattr(entry, 'link', 'No Link')
-                pubDate = getattr(entry, 'published', 'No Date')
+            for entry in feed.entries[:15]:
+                # 제목과 링크를 안전하게 추출 (없으면 빈칸)
+                title = safe_str(entry.get('title', 'No Title'))
+                link = safe_str(entry.get('link', 'No Link'))
+                pubDate = safe_str(entry.get('published', 'No Date'))
                 
-                # 데이터가 바이트(bytes)로 들어올 경우 강제로 문자열(str)로 변환
-                if isinstance(title, bytes): title = title.decode('utf-8', 'ignore')
-                if isinstance(link, bytes): link = link.decode('utf-8', 'ignore')
-                
+                # 리스트에 추가
                 all_news.append(f"Source: {source} | Title: {title} | Link: {link} | Date: {pubDate}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
@@ -43,69 +47,74 @@ def fetch_news():
     return all_news
 
 def analyze_news(news_list):
+    print("Configuring AI...")
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 모델 1: Screener
-    print("Screening news with Gemini")
+    # 뉴스 리스트를 하나의 긴 문자열로 합침 (중간에 깨지지 않게 방어)
+    news_text = "\n".join([safe_str(n) for n in news_list])
+    
+    # 모델 1: Screener (Flash)
+    print("Screening news...")
     try:
         flash_model = genai.GenerativeModel('gemini')
-        news_text = "\n".join(news_list)
         screening_prompt = f"""
-        You are a professional financial news screener.
-        Filter out duplicates and select the TOP 10 most critical stories.
-        Output ONLY the list.
-        News Data:
-        {news_text[:50000]} 
+        Select top 10 critical financial news from the list below.
+        Return ONLY the list.
+        
+        {news_text[:40000]}
         """
-        # 입력 데이터가 너무 길 경우를 대비해 50000자 제한
         screened_result = flash_model.generate_content(screening_prompt).text
     except Exception as e:
-        return f"Error in screening: {e}"
+        return f"Error in screening: {safe_str(e)}"
 
-    # 모델 2: Analyst
-    print("Analyzing with Gemini")
+    # 모델 2: Analyst (Pro)
+    print("Analyzing news...")
     try:
         pro_model = genai.GenerativeModel('gemini')
         analysis_prompt = f"""
-        You are the 'Chief Strategic Architect'.
-        Write a daily executive briefing based on these news:
-        {screened_result}
+        You are a strict financial analyst.
+        Based on these news:
+        {safe_str(screened_result)}
         
-        Format:
+        Write a report in Korean with:
         1. Market Sentiment (Bullish/Bearish)
-        2. Top 3 Key Events & Why
+        2. Top 3 Issues
         3. Action Plan
-        
-        Translate output to Korean.
         """
         final_report = pro_model.generate_content(analysis_prompt).text
-        return final_report
+        return safe_str(final_report)
     except Exception as e:
-        return f"Error in analysis: {e}"
+        return f"Error in analysis: {safe_str(e)}"
 
 def send_email(report_body):
-    print("Sending email via Outlook...")
+    print("Preparing email...")
+    
+    # 본문도 혹시 모르니 다시 한번 문자열 세탁
+    clean_body = safe_str(report_body)
+    
     msg = MIMEMultipart()
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
-    msg['Subject'] = f"🚀 Daily AI Financial Report - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['Subject'] = f"Daily AI Financial Report - {datetime.now().strftime('%Y-%m-%d')}"
 
-    # [핵심 수정] 본문을 강제로 문자열(str)로 변환하고 UTF-8 인코딩 명시
-    if not isinstance(report_body, str):
-        report_body = str(report_body)
-    
-    msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
+    # UTF-8 인코딩 명시
+    msg.attach(MIMEText(clean_body, 'plain', 'utf-8'))
 
+    print("Connecting to Outlook Server...")
     try:
-        # Outlook SMTP 서버
+        # Outlook 서버 연결
         server = smtplib.SMTP('smtp.outlook.com', 587)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
+        
+        # 메시지를 문자열로 변환하여 전송
+        text = msg.as_string()
+        server.sendmail(EMAIL_USER, EMAIL_RECEIVER, text)
+        
         server.quit()
-        print("Outlook Email sent successfully!")
+        print("✅ Email sent successfully!")
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        print(f"❌ Failed to send email: {e}")
 
 if __name__ == "__main__":
     news_data = fetch_news()
