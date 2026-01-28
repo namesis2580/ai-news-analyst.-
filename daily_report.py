@@ -19,9 +19,11 @@ EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
 EMAIL_PASSWORD = clean_text(os.environ.get("EMAIL_PASSWORD"))
 EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
 
+# --- RSS 피드 주소 (데이터 소스) ---
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
-    "Google News": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
+    "Google News (Business)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+    "Google News (Tech)": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en"
 }
 
 def fetch_news():
@@ -31,11 +33,15 @@ def fetch_news():
         try:
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
-            for entry in feed.entries[:15]:
+            for entry in feed.entries[:10]: # 소스당 상위 10개 추출
                 title = clean_text(getattr(entry, 'title', 'No Title'))
                 link = clean_text(getattr(entry, 'link', 'No Link'))
                 pubDate = clean_text(getattr(entry, 'published', 'No Date'))
-                all_news.append(f"Source: {source} | Title: {title} | Link: {link} | Date: {pubDate}")
+                # [핵심 업그레이드] 요약문(Summary)을 가져와서 AI에게 제공 (분석 품질 향상)
+                summary = clean_text(getattr(entry, 'summary', 'No Summary'))
+                
+                # AI가 읽기 편한 포맷으로 변환
+                all_news.append(f"[{source}] Title: {title} | Summary: {summary[:300]} | Date: {pubDate} | Link: {link}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
     return all_news
@@ -46,34 +52,46 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델: Gemini 3 Flash Preview
+        # 모델: Gemini 3 Flash Preview (최신 성능)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
-        print("Analyzing news with Chief Strategic Architect v10.0...")
+        print("Analyzing news with Chief Strategic Architect v10.0 (RSS Mode)...")
         
-        # --- [최종 선택] RSS 환경에 최적화된 고성능 프롬프트 ---
+        # --- [최종 검증된 RSS 전용 프롬프트] ---
         prompt = f"""
-        # 🌌 CHIEF STRATEGIC ARCHITECT v10.0 (RSS ANALYZER MODE)
+        # 🌌 CHIEF STRATEGIC ARCHITECT v10.0 (RSS INTEGRATED FINAL)
 
+        **SYSTEM STATUS:** OFFLINE MODE.
+        **INPUT SOURCE:** The provided `[RSS_RAW_DATA]` below.
+        **OUTPUT LANGUAGE:** Korean (한국어).
+
+        # 🛡️ MODULE 0: TRUTH PROTOCOL (RSS EDITION)
         **MANDATE:**
-        1. **Ingest:** Analyze the provided `[NEWS_DATA]` below.
-        2. **Compute:** Apply **Module 1, 5-FUSION ENGINE** logic.
-        3. **Report:** Synthesize a high-level executive briefing in **Korean**.
+        1. **Expand:** Analyze `[RSS_RAW_DATA]` to identify the single most critical market trend (**[STRATEGIC_VECTOR]**).
+        2. **Ingest (Simulated Search):** Do not browse the web. Instead, **SCAN and FILTER** the provided text to fill the 6 Buffers.
+        3. **Compute:** Apply **Module 1, 5-FUSION ENGINE** lenses.
+        4. **Report:** Synthesize the final briefing.
 
-        **CONSTRAINT:** - DO NOT attempt to browse the web (You are in Offline Mode). 
-        - Base your analysis STRICTLY on the provided `[NEWS_DATA]`.
-        - If data is insufficient for a specific section, deduce logically using the 'PILOT' or 'CHIMERA' persona.
+        ### STEP 1: INPUT AMPLIFIER
+        * **Trigger:** Extract the **[STRATEGIC_VECTOR]** (e.g., "AI Bubble Risk", "Fed Rate Policy").
+        * **Persona Scaling:** Determine Dynamic Weighting (%) based on the threat level.
 
+        ### STEP 2~7: BUFFER SIMULATION (Internal Scan)
+        * **[Official]:** Filter text for: Gov, Fed, SEC, Policy, Regulation.
+        * **[Tech]:** Filter text for: AI, Innovation, R&D, Patent.
+        * **[Market]:** Filter text for: Stock moves, Earnings, Analyst Ratings.
+        * **[Social/Sentiment]:** Analyze the *tone* of the headlines (Fear/Greed).
+        
         ---
 
         ## 🧠 MODULE 1: IDENTITY & LOGIC 
         **IDENTITY:** Chief Strategic Architect.
         **Goal:** **Wealth Max (ROI)** & **Vitality**.
 
-        **🏛️ 5-FUSION ENGINE (Apply these lenses to the news):**
-        1. **🔥 PILOT:** Risk management. Reject ruin. Focus on asymmetry.
-        2. **🌀 HYDRA:** Market Sentiment & Memetics. What is the crowd thinking?
-        3. **🔮 CHIMERA:** Future Scenario Planning. What happens next?
+        **🏛️ 5-FUSION ENGINE (Apply these lenses):**
+        1. **🔥 PILOT:** Risk management. Enforce Barbell Strategy (Cash vs High Risk).
+        2. **🌀 HYDRA:** Market Sentiment. Is the crowd wrong?
+        3. **🔮 CHIMERA:** Future Scenarios. What is the next domino to fall?
         4. **🐍 OUROBOROS:** Via Negativa. What is NOT being said?
         5. **🌟 ORACLE:** Intuition on complexity.
 
@@ -82,32 +100,33 @@ def analyze_news(news_list):
         ## 📝 MODULE 2: REPORT FORMAT (Write in Korean)
 
         ### CHAPTER 1. 🏛️ The Verdict (결론)
-        * **Active Persona:** (Which Mode dominated this analysis? e.g., PILOT, HYDRA)
-        * **Market Status:** [Bullish / Bearish / Neutral]
-        * **Strategic Answer:** (One sentence core strategy based on the news)
-        * **Confidence:** [0-100%]
+        * **Active Persona:** [Mode : Weight %].
+        * **Market Status:** [Bullish / Bearish / Neutral].
+        * **Strategic Answer:** (One powerful sentence strategy based on **[STRATEGIC_VECTOR]**).
+        * **Confidence:** [0-100%].
 
         ### CHAPTER 2. 👁️ 6-Point Cross-Verification (Data Evidence)
-        * **[🏛️ Official/Policy]:** (Key regulatory/gov news found in data)
-        * **[⚙️ Tech/Innovation]:** (Key tech/business moves found in data)
-        * **[🔍 Market/Google]:** (Key market trends found in data)
-        * **[🗣️ Sentiment]:** (Implied sentiment from the headlines)
-        * **[⚠️ Conflict Check]:** (Any contradictory signals in the news?)
+        *Extract evidence strictly from `[RSS_RAW_DATA]`. Use [N/A] if data is missing.*
+        * **[🏛️ Official/Policy]:** (Policies, Fed, Gov news)
+        * **[⚙️ Tech/Innovation]:** (New Tech, AI, Products)
+        * **[🔍 Market/Google]:** (Stock Prices, Earnings)
+        * **[🗣️ Sentiment]:** (Implied Market Sentiment)
+        * **[⚠️ Conflict Check]:** (Any contradictions in the news?)
 
         ### CHAPTER 3. ⚔️ Deep Analysis (Actionable Intel)
-        * **[Logic Trace]:** (Briefly explain why you reached the verdict)
+        * **[Logic Trace]:** (Briefly explain the reasoning using the 5-Fusion Engine).
         * **[Action Plan]:**
-            * **Step 1:** (Specific investment or monitoring action)
-            * **Step 2:** (Next move)
+            * **Step 1 (Immediate):** (Buy/Sell/Hold specific sectors)
+            * **Step 2 (Strategic):** (Long-term positioning)
 
         ### CHAPTER 4. 😈 Devil’s Audit
-        * **Flaw:** (Biggest risk in this current market view)
-        * **Kill Switch:** (Condition to exit positions)
+        * **Flaw:** (Biggest weakness in this view).
+        * **Kill Switch:** (Exact condition to abort this strategy).
 
         ---
         
-        **[NEWS_DATA TO ANALYZE]**
-        {news_text[:55000]}
+        **[RSS_RAW_DATA TO ANALYZE]**
+        {news_text[:60000]}
         """
         
         response = model.generate_content(prompt)
