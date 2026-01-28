@@ -100,7 +100,7 @@ def send_email(report_body):
     msg.attach(MIMEText(report_body, 'plain'))
 
     try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP('smtp.outlook.com', 587)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASSWORD)
         server.send_message(msg)
