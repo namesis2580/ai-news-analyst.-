@@ -5,16 +5,15 @@ import google.generativeai as genai
 from email.message import EmailMessage
 from datetime import datetime
 
-# --- [핵심] Gmail 서버 설정 ---
+# --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [초강력] 데이터 세탁 함수 (유령 문자 제거) ---
+# --- 데이터 세탁 함수 ---
 def clean_text(text):
     if text is None: return ""
-    # \xa0(투명 공백)을 일반 공백으로 바꾸고, 양쪽 공백 제거
     return str(text).replace('\xa0', ' ').strip()
 
-# --- 설정 불러오기 (세탁기 돌림) ---
+# --- 환경변수 불러오기 ---
 GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
 EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
 EMAIL_PASSWORD = clean_text(os.environ.get("EMAIL_PASSWORD"))
@@ -47,25 +46,41 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 1. Screener (Flash)
-        print("Screening news...")
-        flash_model = genai.GenerativeModel('gemini-1.5-flash')
-        screening_prompt = f"Select top 10 critical financial news:\n{news_text[:40000]}"
-        screened_result = flash_model.generate_content(screening_prompt).text
+        # [최종 업그레이드] Gemini 3 Flash 프리뷰 모델 탑재
+        model = genai.GenerativeModel('gemini-3-flash-preview') 
+        
+        print("Analyzing news with Gemini 3 Flash...")
+        
+        prompt = f"""
+        You are a Chief Financial Strategic Architect.
+        Read the following financial news headlines and write a comprehensive daily briefing in Korean.
 
-        # 2. Analyst (Pro)
-        print("Analyzing news...")
-        pro_model = genai.GenerativeModel('gemini-1.5-pro')
-        analysis_prompt = f"""
-        Write a financial briefing in Korean based on:
-        {screened_result}
-        Format:
-        1. Market Sentiment (Bullish/Bearish)
-        2. Top 3 Key Issues
-        3. Strategic Action Plan
+        [NEWS DATA]
+        {news_text[:50000]}
+
+        [OUTPUT FORMAT]
+        Please write in clean Markdown format (use bolding, lists).
+        
+        # 🚀 Daily AI Financial Briefing (Powered by Gemini 3)
+        
+        ## 1. 📢 Market Sentiment
+        (Bullish / Bearish / Neutral) and a one-sentence summary of why.
+
+        ## 2. 📈 Top 3 Critical Issues
+        * **Event 1:** (Summary & Why it matters)
+        * **Event 2:** ...
+        * **Event 3:** ...
+
+        ## 3. 💡 Strategic Action Plan
+        (Specific advice for an investor: Risk On/Off, Sectors to watch)
+
+        ## 4. 🔗 Key Sources
+        (List top 3 urls from the data)
         """
-        final_report = pro_model.generate_content(analysis_prompt).text
-        return clean_text(final_report)
+        
+        response = model.generate_content(prompt)
+        return clean_text(response.text)
+        
     except Exception as e:
         return f"Error in analysis: {e}"
 
@@ -73,7 +88,6 @@ def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
     msg = EmailMessage()
-    # 본문 인코딩을 UTF-8로 강제 고정
     msg.set_content(report_body, charset='utf-8')
     
     msg['Subject'] = f"Daily AI Report - {datetime.now().strftime('%Y-%m-%d')}"
@@ -89,8 +103,6 @@ def send_email(report_body):
             print("✅ Email sent successfully!")
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
-        # 디버깅: 값의 길이와 타입을 출력해서 숨은 문자 확인
-        print(f"Debug -> User Len: {len(EMAIL_USER)}, Receiver Len: {len(EMAIL_RECEIVER)}")
 
 if __name__ == "__main__":
     news_data = fetch_news()
