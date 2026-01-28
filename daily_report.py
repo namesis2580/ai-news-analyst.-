@@ -23,7 +23,8 @@ EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
     "Google News (Business)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
-    "Google News (Tech)": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en"
+    "Google News (Tech)": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en",
+    "Investing.com": "https://www.investing.com/rss/news.rss",
 }
 
 def fetch_news():
@@ -33,7 +34,7 @@ def fetch_news():
         try:
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
-            for entry in feed.entries[:10]: # 소스당 상위 10개 추출
+            for entry in feed.entries[:20]: # 소스당 상위 20개 추출
                 title = clean_text(getattr(entry, 'title', 'No Title'))
                 link = clean_text(getattr(entry, 'link', 'No Link'))
                 pubDate = clean_text(getattr(entry, 'published', 'No Date'))
