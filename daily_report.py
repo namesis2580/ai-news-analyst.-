@@ -17,7 +17,7 @@ def extract_pure_email(text):
     if text is None: return ""
     text = str(text)
     # 1. 모든 유령 공백 제거
-    text = text.replace('\xa0', '').strip()
+    text = "".join(text.split())
     # 2. 정규표현식으로 '이메일 주소 패턴'만 강제 추출
     # 예: "My Name \xa0 <user@gmail.com>" -> "user@gmail.com"
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
@@ -40,18 +40,18 @@ def clean_text_body(text):
 # --- 환경변수 로드 및 수술 집도 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# [핵심] 여기서 이메일 주소만 쏙 뽑아냅니다.
-raw_email_user = os.environ.get("EMAIL_USER", "")
-EMAIL_USER = extract_pure_email(raw_email_user)
+# [핵심] 이메일 주소만 쏙 뽑아냅니다.
+raw_user = os.environ.get("EMAIL_USER", "")
+EMAIL_USER = extract_pure_email(raw_user)
 
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
 
-raw_email_receiver = os.environ.get("EMAIL_RECEIVER", "")
-EMAIL_RECEIVER = extract_pure_email(raw_email_receiver)
+raw_receiver = os.environ.get("EMAIL_RECEIVER", "")
+EMAIL_RECEIVER = extract_pure_email(raw_receiver)
 
-# 디버깅: 추출된 이메일이 깨끗한지 길이로 확인 (내용은 보안상 출력 X)
-print(f"Debug: Extracted EMAIL_USER length: {len(EMAIL_USER)}")
-print(f"Debug: Extracted EMAIL_RECEIVER length: {len(EMAIL_RECEIVER)}")
+# 디버깅 출력 (로그 확인용)
+print(f"DEBUG: Cleaned EMAIL_USER: {repr(EMAIL_USER)}")
+print(f"DEBUG: Cleaned EMAIL_RECEIVER: {repr(EMAIL_RECEIVER)}")
 
 # --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
@@ -105,6 +105,7 @@ def analyze_news(news_list):
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
+        # [복구 완료] 닥터 둠과 전략 위원회 프롬프트 완전체
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -172,8 +173,6 @@ def analyze_news(news_list):
 
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
-    
-    # 본문 정화
     report_body = clean_text_body(report_body)
     
     # MIMEMultipart 사용 (안정성 최우선)
@@ -181,19 +180,19 @@ def send_email(report_body):
     
     # 제목 ASCII 강제 변환
     raw_subject = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    # ASCII가 아닌 모든 문자는 제거
     safe_subject = raw_subject.encode('ascii', 'ignore').decode('ascii').strip()
     
     msg['Subject'] = safe_subject
-    msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_RECEIVER
+    # [중요] 꺾쇠 괄호로 이메일 주소 명확화
+    msg['From'] = f"<{EMAIL_USER}>"
+    msg['To'] = f"<{EMAIL_RECEIVER}>"
     
     # 본문 UTF-8 강제 지정
     msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
 
     print("Connecting to Gmail Server...")
-    print(f"Debug - Final Subject: {safe_subject}")
-    print(f"Debug - Email Sender: {EMAIL_USER}") 
+    print(f"Debug - Sending From: {msg['From']}")
+    print(f"Debug - Sending To: {msg['To']}")
     
     try:
         with smtplib.SMTP(SMTP_SERVER, 587) as server:
@@ -207,15 +206,13 @@ def send_email(report_body):
 if __name__ == "__main__":
     news_data = fetch_news()
     if news_data:
+        # 뉴스 데이터가 있으면 분석 시작
         report = analyze_news(news_data)
         
         if report and "Error" not in report:
             send_email(report)
         else:
             print("\n❌ Report generation failed!")
-            print("="*30)
-            print("👇 ERROR DETAILS (원인은 아래와 같습니다) 👇")
             print(report)
-            print("="*30)
     else:
         print("No news found.")
