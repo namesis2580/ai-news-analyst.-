@@ -6,24 +6,38 @@ from datetime import datetime
 import time
 import re
 import unicodedata
-# [수정 1] 이메일 표준 라이브러리 추가
 from email.mime.text import MIMEText
 from email.header import Header
+
+# --- [0단계] 강력 세탁 함수 (여기가 핵심입니다) ---
+def nuclear_clean(text):
+    """
+    눈에 안 보이는 유령 문자(\xa0)를 포함해 모든 노이즈를 제거하고
+    무조건 순수 영어/숫자/기호(ASCII)만 남깁니다.
+    """
+    if not text: return ""
+    # 1. 유령 공백(\xa0)을 일반 공백으로 치환
+    text = text.replace('\xa0', ' ')
+    # 2. 앞뒤 공백 제거
+    text = text.strip()
+    # 3. ASCII가 아닌 문자는 아예 삭제 (ignore)
+    return text.encode('ascii', 'ignore').decode('ascii')
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 환경변수 로드 & DNA 분석 ---
+# --- [1단계] 환경변수 로드 & 즉시 세탁 ---
+# 가져오자마자 바로 세탁기에 돌립니다.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-EMAIL_USER = os.environ.get("EMAIL_USER", "")
+EMAIL_USER = nuclear_clean(os.environ.get("EMAIL_USER", ""))
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER", "")
+EMAIL_RECEIVER = nuclear_clean(os.environ.get("EMAIL_RECEIVER", ""))
 
-# [진단] 유령 문자 색출
+# [진단] 세탁 결과 확인
 print("="*30)
-print("🔍 EMAIL_USER DNA ANALYSIS:")
-print(f"Original: '{EMAIL_USER}'")
-print(f"ASCII Codes: {[ord(c) for c in EMAIL_USER]}") 
+print("🔍 DNA ANALYSIS (After Cleaning):")
+print(f"Sender:   '{EMAIL_USER}' (Len: {len(EMAIL_USER)})")
+print(f"Receiver: '{EMAIL_RECEIVER}' (Len: {len(EMAIL_RECEIVER)})")
 print("="*30)
 
 # --- [정보 수집] ---
@@ -42,6 +56,7 @@ RSS_URLS = {
 def clean_text_body(text):
     if text is None: return ""
     text = str(text)
+    # 본문 텍스트 정규화
     text = unicodedata.normalize('NFKC', text)
     text = re.sub(r'<[^>]+>', '', text)
     text = re.sub(r'\s+', ' ', text)
@@ -73,7 +88,6 @@ def analyze_news(news_list):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
-        # Gemini 3.0 모델
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
@@ -141,34 +155,28 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # [안전 조치 1] 본문 내 유령 문자(\xa0)를 일반 공백으로 치환
+    # [안전 조치] 본문 내 유령 문자(\xa0)를 일반 공백으로 치환
     if report_body:
         report_body = report_body.replace('\xa0', ' ')
 
     safe_date = datetime.now().strftime('%Y-%m-%d')
     subject_text = f"Strategic_Council_Report_{safe_date}"
     
-    # 이메일 주소 세탁
-    safe_user = EMAIL_USER.encode('ascii', 'ignore').decode('ascii').strip()
-    safe_receiver = EMAIL_RECEIVER.encode('ascii', 'ignore').decode('ascii').strip()
-    
-    print(f"DEBUG: Final Safe Sender: '{safe_user}'")
-    
-    # [수정 2] MIMEText 객체 사용하여 UTF-8 강제
-    # 'plain'은 일반 텍스트, 'html'을 원하면 'html'로 변경
+    # 이메일 메시지 객체 생성 (UTF-8 강제)
+    # EMAIL_USER와 RECEIVER는 이미 상단에서 nuclear_clean으로 완벽하게 세탁되었습니다.
     msg = MIMEText(report_body, 'plain', 'utf-8')
     msg['Subject'] = Header(subject_text, 'utf-8')
-    msg['From'] = safe_user
-    msg['To'] = safe_receiver
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_RECEIVER
 
     print("Connecting to Gmail Server...")
 
     try:
         server = smtplib.SMTP(SMTP_SERVER, 587, local_hostname='localhost')
         server.starttls()
-        server.login(safe_user, EMAIL_PASSWORD)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
         
-        # [수정 3] send_message 사용 (인코딩 자동 처리)
+        # send_message는 헤더 인코딩을 알아서 처리해줍니다.
         server.send_message(msg)
         
         server.quit()
