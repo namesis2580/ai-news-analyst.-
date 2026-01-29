@@ -6,44 +6,44 @@ from email.message import EmailMessage
 from datetime import datetime
 import time
 import re
-import unicodedata
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 일반 텍스트 세탁 (본문용, 한글 보존) ---
-def clean_text(text):
+# --- [1단계] 환경변수 '강제' 정화 함수 (ASCII가 아니면 무조건 삭제) ---
+def sanitize_env_var(value):
+    if value is None:
+        return ""
+    # 1. 문자열 변환
+    value = str(value)
+    # 2. 유령 공백(\xa0)을 일반 공백으로 치환 후 strip
+    value = value.replace('\xa0', '').replace('&nbsp;', '')
+    # 3. [핵심] ASCII 문자가 아닌 것은 아예 삭제 (이메일 주소에 한글/특수문자 불가)
+    # ignore 옵션: 해석 불가능한 문자는 그냥 버림
+    return value.encode('ascii', 'ignore').decode('ascii').strip()
+
+# --- [2단계] 일반 텍스트 세탁 (본문용 - 한글 허용) ---
+def clean_text_body(text):
     if text is None: return ""
     text = str(text)
-    # 1. 유니코드 정규화 (모든 특수 공백을 일반 공백으로 변환)
-    text = unicodedata.normalize('NFKC', text)
-    # 2. HTML 태그 제거
+    # HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text)
-    # 3. 유령 공백(\xa0) 하드코딩 제거
-    text = text.replace('\xa0', ' ')
-    # 4. 공백 정리
+    # 특수문자 치환
+    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
+    # 공백 정리
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# --- [2단계] 헤더용 강력 세탁 (제목/이메일용, 특수문자 아예 삭제) ---
-def force_ascii_clean(text):
-    if text is None: return ""
-    text = str(text)
-    # 유령 공백을 일반 공백으로 먼저 치환
-    text = text.replace('\xa0', ' ')
-    
-    # ASCII 범위(영어, 숫자, 기본기호)가 아닌 문자는 모두 무시(ignore)하고 삭제
-    # 이렇게 하면 한글이나 이모지, 유령 공백이 제목에 들어가면 다 사라집니다. (안정성 최우선)
-    return text.encode('ascii', 'ignore').decode('ascii').strip()
-
-# --- 환경변수 ---
-# API 키는 그대로 둠
+# --- 환경변수 로드 및 즉시 정화 ---
+# 여기서부터 모든 변수는 깨끗한 상태가 됩니다.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+EMAIL_USER = sanitize_env_var(os.environ.get("EMAIL_USER"))      # 이메일 주소 정화
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()    # 비번은 건드리지 않음
+EMAIL_RECEIVER = sanitize_env_var(os.environ.get("EMAIL_RECEIVER")) # 수신자 주소 정화
 
-# 이메일 관련 변수는 force_ascii_clean으로 강력 세탁 (주소에 특수문자 금지)
-EMAIL_USER = force_ascii_clean(os.environ.get("EMAIL_USER"))
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-EMAIL_RECEIVER = force_ascii_clean(os.environ.get("EMAIL_RECEIVER"))
+# --- [디버깅] 정화된 이메일 주소 확인 (로그에는 앞자리만 표시) ---
+print(f"Debug: Sanitized EMAIL_USER length: {len(EMAIL_USER)}")
+print(f"Debug: Sanitized EMAIL_RECEIVER length: {len(EMAIL_RECEIVER)}")
 
 # --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
@@ -67,9 +67,9 @@ def fetch_news():
             print(f"Fetched {len(feed.entries)} articles from {source}")
             
             for entry in feed.entries[:10]: 
-                title = clean_text(getattr(entry, 'title', 'No Title'))
-                link = clean_text(getattr(entry, 'link', 'No Link'))
-                pubDate = clean_text(getattr(entry, 'published', 'No Date'))
+                title = clean_text_body(getattr(entry, 'title', 'No Title'))
+                link = clean_text_body(getattr(entry, 'link', 'No Link'))
+                pubDate = clean_text_body(getattr(entry, 'published', 'No Date'))
                 
                 content = ""
                 if hasattr(entry, 'content'):
@@ -79,7 +79,7 @@ def fetch_news():
                 elif hasattr(entry, 'summary'):
                     content = entry.summary
                 
-                clean_content = clean_text(content)[:10000]
+                clean_content = clean_text_body(content)[:10000]
                 all_news.append(f"[{source}] Title: {title} | Content: {clean_content} | Date: {pubDate} | Link: {link}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
@@ -91,7 +91,7 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델: Gemini 3 Flash Preview (내일 아침 작동)
+        # 모델: Gemini 3 Flash Preview (내일 아침 리셋 후 정상 작동)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -157,7 +157,7 @@ def analyze_news(news_list):
             request_options={"timeout": 1000},
             safety_settings=safety_settings
         )
-        return clean_text(response.text)
+        return clean_text_body(response.text)
         
     except Exception as e:
         return f"Error in analysis: {e}"
@@ -165,23 +165,23 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # [1] 본문은 한글이 있어야 하므로 clean_text 사용 (유니코드 정규화)
-    report_body = clean_text(report_body)
+    # 본문 세탁
+    report_body = clean_text_body(report_body)
     
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # [2] 제목은 에러 방지를 위해 강제로 영어/숫자만 남김 (force_ascii_clean)
-    # 이렇게 하면 "\xa0" 같은 유령 문자가 있어도 강제로 삭제되어 전송 성공함
+    # 제목 세탁 (강력 정화: ASCII만 남김)
     raw_subject = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    safe_subject = force_ascii_clean(raw_subject)
-    
+    safe_subject = sanitize_env_var(raw_subject)
     msg['Subject'] = safe_subject
+    
+    # 발신자/수신자 (이미 위에서 sanitize_env_var로 씻었음)
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
     print("Connecting to Gmail Server...")
-    print(f"Debug - Subject: {safe_subject}") # 디버깅용: 실제 전송될 제목 확인
+    print(f"Debug - Final Subject: {safe_subject}")
     
     try:
         with smtplib.SMTP(SMTP_SERVER, 587) as server:
