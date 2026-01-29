@@ -2,10 +2,14 @@ name: Daily Financial Briefing
 
 on:
   schedule:
-    # 1. 한국 시간 아침 8시 30분 실행 (전날 UTC 23:30)
-    - cron: '30 23 * * *'
-    # 2. 한국 시간 밤 11시 실행 (당일 UTC 14:00)
-    - cron: '0 14 * * *'
+    # 1. 한국 시간 아침 7시 30분 실행 (UTC 22:30)
+    # -> 딜레이 포함 시 대략 8시 ~ 8시 40분 사이 도착 예상
+    - cron: '30 22 * * *'
+
+    # 2. 한국 시간 밤 10시 00분 실행 (UTC 13:00)
+    # -> 딜레이 포함 시 대략 10시 30분 ~ 11시 10분 사이 도착 예상
+    - cron: '0 13 * * *'
+
   workflow_dispatch: # 수동 실행 버튼
 
 jobs:
@@ -14,12 +18,12 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3  # v2 -> v3 업그레이드
+      uses: actions/checkout@v3
 
     - name: Set up Python
-      uses: actions/setup-python@v4 # v2 -> v4 업그레이드
+      uses: actions/setup-python@v4
       with:
-        python-version: '3.11' # 3.9 -> 3.11 (핵심 업그레이드)
+        python-version: '3.11'
 
     - name: Install libraries
       run: |
