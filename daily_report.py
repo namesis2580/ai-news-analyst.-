@@ -6,39 +6,49 @@ from datetime import datetime
 import time
 import re
 import unicodedata
-from email.mime.text import MIMEText
-from email.header import Header
-
-# --- [0단계] 강력 세탁 함수 (여기가 핵심입니다) ---
-def nuclear_clean(text):
-    """
-    눈에 안 보이는 유령 문자(\xa0)를 포함해 모든 노이즈를 제거하고
-    무조건 순수 영어/숫자/기호(ASCII)만 남깁니다.
-    """
-    if not text: return ""
-    # 1. 유령 공백(\xa0)을 일반 공백으로 치환
-    text = text.replace('\xa0', ' ')
-    # 2. 앞뒤 공백 제거
-    text = text.strip()
-    # 3. ASCII가 아닌 문자는 아예 삭제 (ignore)
-    return text.encode('ascii', 'ignore').decode('ascii')
+import traceback  # [추가] 상세 에러 추적을 위한 모듈
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 환경변수 로드 & 즉시 세탁 ---
-# 가져오자마자 바로 세탁기에 돌립니다.
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-EMAIL_USER = nuclear_clean(os.environ.get("EMAIL_USER", ""))
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-EMAIL_RECEIVER = nuclear_clean(os.environ.get("EMAIL_RECEIVER", ""))
+# --- [0단계] 철저한 무균실 세탁 함수 ---
+def forensic_clean(text, var_name):
+    if text is None: return ""
+    text = str(text)
+    
+    print(f"--- Checking {var_name} ---")
+    # 원본 상태에서 이상한 문자가 있는지 헥사값으로 확인
+    dirty_chars = [f"{i}:{c}({hex(ord(c))})" for i, c in enumerate(text) if ord(c) > 127]
+    if dirty_chars:
+        print(f"⚠️ WARN: Found non-ASCII chars in {var_name}: {dirty_chars}")
+    
+    # 1. 유니코드 정규화
+    text = unicodedata.normalize('NFKC', text)
+    # 2. 유령 공백 제거
+    text = text.replace('\xa0', '').replace('\u200b', '')
+    # 3. ASCII가 아닌 모든 문자 강제 삭제 (화이트리스트 방식)
+    # 영어, 숫자, 기본 기호(@, ., _, -)만 남김
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-"
+    clean_text = "".join([c for c in text if c in allowed])
+    
+    print(f"✅ Cleaned {var_name}: '{clean_text}' (Len: {len(clean_text)})")
+    return clean_text
 
-# [진단] 세탁 결과 확인
-print("="*30)
-print("🔍 DNA ANALYSIS (After Cleaning):")
-print(f"Sender:   '{EMAIL_USER}' (Len: {len(EMAIL_USER)})")
-print(f"Receiver: '{EMAIL_RECEIVER}' (Len: {len(EMAIL_RECEIVER)})")
-print("="*30)
+def clean_text_body(text):
+    if text is None: return ""
+    text = str(text)
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+# --- [1단계] 환경변수 로드 및 검증 ---
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+
+# 여기서 바로 세탁 들어갑니다.
+EMAIL_USER = forensic_clean(os.environ.get("EMAIL_USER", ""), "EMAIL_USER")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
+EMAIL_RECEIVER = forensic_clean(os.environ.get("EMAIL_RECEIVER", ""), "EMAIL_RECEIVER")
 
 # --- [정보 수집] ---
 RSS_URLS = {
@@ -52,15 +62,6 @@ RSS_URLS = {
     "OilPrice": "https://oilprice.com/rss/main",           
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/" 
 }
-
-def clean_text_body(text):
-    if text is None: return ""
-    text = str(text)
-    # 본문 텍스트 정규화
-    text = unicodedata.normalize('NFKC', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
 
 def fetch_news():
     print("Collecting news from The Avengers Squad...")
@@ -92,6 +93,7 @@ def analyze_news(news_list):
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
+        # [원본 유지] 닥터 둠과 위원회 풀버전 프롬프트
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -103,7 +105,7 @@ def analyze_news(news_list):
         1.  **🐻 Dr. Doom (Risk):** Pessimistic. Focuses on flaws, bubbles, debt, and regulatory threats.
         2.  **🐂 The Visionary (Growth):** Optimistic. Focuses on innovation, adoption, and 10x opportunities.
         3.  **🦅 The Hawk (Macro):** Realist. Focuses on Fed rates, Oil, Wars, and Liquidity.
-        4.  **🦊 The Fox (Contrarian):** Skeptic of the crowd. Looks for information asymmetry (Hacker News vs Yahoo).
+        4.  **🦊 The Fox (Contrarian):** Skeptic of the crowd. Looks for information asymmetry.
 
         ---
 
@@ -150,39 +152,57 @@ def analyze_news(news_list):
         response = model.generate_content(prompt, request_options={"timeout": 1000}, safety_settings=safety_settings)
         return clean_text_body(response.text)
     except Exception as e:
-        return f"Error in analysis: {e}"
+        # 에러 발생 시 상세 정보 반환
+        return f"Error in analysis: {e}\n{traceback.format_exc()}"
 
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # [안전 조치] 본문 내 유령 문자(\xa0)를 일반 공백으로 치환
-    if report_body:
-        report_body = report_body.replace('\xa0', ' ')
-
+    # 1. 제목 생성 (언더바 사용)
     safe_date = datetime.now().strftime('%Y-%m-%d')
-    subject_text = f"Strategic_Council_Report_{safe_date}"
+    subject = f"Strategic_Council_Report_{safe_date}"
     
-    # 이메일 메시지 객체 생성 (UTF-8 강제)
-    # EMAIL_USER와 RECEIVER는 이미 상단에서 nuclear_clean으로 완벽하게 세탁되었습니다.
-    msg = MIMEText(report_body, 'plain', 'utf-8')
-    msg['Subject'] = Header(subject_text, 'utf-8')
-    msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_RECEIVER
+    # 2. 본문 생성
+    email_content = f"""From: {EMAIL_USER}
+To: {EMAIL_RECEIVER}
+Subject: {subject}
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+{report_body}
+"""
+    
+    # [진단] 전송 직전 데이터 최종 확인
+    print("--- PRE-FLIGHT CHECK ---")
+    print(f"Sender: '{EMAIL_USER}' (ASCII ONLY: {EMAIL_USER.isascii()})")
+    print(f"Receiver: '{EMAIL_RECEIVER}' (ASCII ONLY: {EMAIL_RECEIVER.isascii()})")
+    print(f"Subject: '{subject}' (ASCII ONLY: {subject.isascii()})")
+    
+    # 만약 여기서 ASCII가 아니라면 강제로 에러를 발생시켜서 멈춥니다. (어설프게 보내지 않음)
+    if not EMAIL_USER.isascii() or not EMAIL_RECEIVER.isascii():
+        raise ValueError("FATAL ERROR: Email address still contains non-ASCII characters!")
 
     print("Connecting to Gmail Server...")
 
     try:
+        # local_hostname 지정으로 헬로 메시지 이슈 차단
         server = smtplib.SMTP(SMTP_SERVER, 587, local_hostname='localhost')
+        server.set_debuglevel(1) # [중요] SMTP 서버와의 통신 내역을 전부 출력
+        
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASSWORD)
         
-        # send_message는 헤더 인코딩을 알아서 처리해줍니다.
-        server.send_message(msg)
+        # [최종] 바이트 전송
+        server.sendmail(EMAIL_USER, EMAIL_RECEIVER, email_content.encode('utf-8'))
         
         server.quit()
         print("✅ Email sent successfully!")
-    except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        
+    except Exception:
+        print("\n❌ FATAL ERROR in send_email:")
+        # [핵심] 여기서 에러의 전체 족보(Stack Trace)를 출력합니다.
+        traceback.print_exc()
 
 if __name__ == "__main__":
     news_data = fetch_news()
