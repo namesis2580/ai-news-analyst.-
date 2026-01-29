@@ -17,16 +17,15 @@ def clean_text(text):
     text = str(text)
     # HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text) 
-    # 특수문자 및 유령 공백(\xa0) 제거 (인코딩 에러 방지)
+    # 특수문자 및 유령 공백(\xa0) 제거 (인코딩 에러의 주범!)
     text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
     # 여러 공백을 하나로
     text = re.sub(r'\s+', ' ', text) 
     return text.strip()
 
-# --- 환경변수 (공백 제거 등 안전장치 추가) ---
+# --- 환경변수 ---
 GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
 EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
-# 비밀번호는 특수문자가 있을 수 있으므로 clean_text 대신 strip()만 사용
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
 EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
 
@@ -77,7 +76,6 @@ def analyze_news(news_list):
         news_text = "\n".join(news_list)
         
         # 모델 유지 (Gemini 3 Flash Preview - 내일 할당량 리셋 시 작동)
-        # ※ 만약 오늘도 테스트하고 싶다면 'gemini-1.5-flash'로 잠시 바꾸셔도 됩니다.
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -131,7 +129,6 @@ def analyze_news(news_list):
         {news_text}
         """
         
-        # 안전 설정
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -152,11 +149,16 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
+    # [핵심 수정] AI가 생성한 보고서 본문에도 유령 공백(\xa0)이 있을 수 있으므로 한번 더 세탁!
+    report_body = clean_text(report_body)
+    
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # [수정 완료] Header 객체 없이 문자열 그대로 할당 (이게 정답입니다)
-    msg['Subject'] = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
+    # [핵심 수정] 제목도 clean_text로 감싸서 유령 공백 제거
+    subject_raw = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['Subject'] = clean_text(subject_raw)
+    
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
