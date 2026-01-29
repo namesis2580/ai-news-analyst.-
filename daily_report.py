@@ -6,44 +6,44 @@ from email.message import EmailMessage
 from datetime import datetime
 import time
 import re
+import unicodedata
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [핵심] 노이즈 및 유령 문자 물리적 박멸 함수 ---
+# --- [1단계] 일반 텍스트 세탁 (본문용, 한글 보존) ---
 def clean_text(text):
     if text is None: return ""
     text = str(text)
-    
-    # 1. HTML 태그 제거
+    # 1. 유니코드 정규화 (모든 특수 공백을 일반 공백으로 변환)
+    text = unicodedata.normalize('NFKC', text)
+    # 2. HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text)
-    
-    # 2. [강력] 문자 코드를 이용한 물리적 치환
-    # \xa0 (ASCII 160번)을 일반 공백 (ASCII 32번)으로 강제 변환
-    # 이모지나 다른 깨질 수 있는 문자들도 여기서 걸러낼 수 있습니다.
-    cleaned_chars = []
-    for char in text:
-        # \xa0(160)은 무조건 공백으로
-        if ord(char) == 160:
-            cleaned_chars.append(' ')
-        else:
-            cleaned_chars.append(char)
-            
-    text = "".join(cleaned_chars)
-    
-    # 3. HTML 엔티티 제거
-    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
-    
+    # 3. 유령 공백(\xa0) 하드코딩 제거
+    text = text.replace('\xa0', ' ')
     # 4. 공백 정리
     text = re.sub(r'\s+', ' ', text)
-    
     return text.strip()
 
+# --- [2단계] 헤더용 강력 세탁 (제목/이메일용, 특수문자 아예 삭제) ---
+def force_ascii_clean(text):
+    if text is None: return ""
+    text = str(text)
+    # 유령 공백을 일반 공백으로 먼저 치환
+    text = text.replace('\xa0', ' ')
+    
+    # ASCII 범위(영어, 숫자, 기본기호)가 아닌 문자는 모두 무시(ignore)하고 삭제
+    # 이렇게 하면 한글이나 이모지, 유령 공백이 제목에 들어가면 다 사라집니다. (안정성 최우선)
+    return text.encode('ascii', 'ignore').decode('ascii').strip()
+
 # --- 환경변수 ---
-GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
-EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
+# API 키는 그대로 둠
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+
+# 이메일 관련 변수는 force_ascii_clean으로 강력 세탁 (주소에 특수문자 금지)
+EMAIL_USER = force_ascii_clean(os.environ.get("EMAIL_USER"))
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
+EMAIL_RECEIVER = force_ascii_clean(os.environ.get("EMAIL_RECEIVER"))
 
 # --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
@@ -91,7 +91,7 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 내일 아침 리셋 후 사용 (Gemini 3.0)
+        # 모델: Gemini 3 Flash Preview (내일 아침 작동)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -165,21 +165,24 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # 1. 본문 다시 한번 물리적 세탁
+    # [1] 본문은 한글이 있어야 하므로 clean_text 사용 (유니코드 정규화)
     report_body = clean_text(report_body)
     
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # 2. 제목에서 이모지 제거 및 세탁 (안정성 확보)
-    # 🌌 같은 이모지가 특정 환경에서 인코딩 에러를 유발하므로 텍스트로 대체합니다.
-    subject_text = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    msg['Subject'] = clean_text(subject_text)
+    # [2] 제목은 에러 방지를 위해 강제로 영어/숫자만 남김 (force_ascii_clean)
+    # 이렇게 하면 "\xa0" 같은 유령 문자가 있어도 강제로 삭제되어 전송 성공함
+    raw_subject = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
+    safe_subject = force_ascii_clean(raw_subject)
     
+    msg['Subject'] = safe_subject
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
     print("Connecting to Gmail Server...")
+    print(f"Debug - Subject: {safe_subject}") # 디버깅용: 실제 전송될 제목 확인
+    
     try:
         with smtplib.SMTP(SMTP_SERVER, 587) as server:
             server.starttls()
