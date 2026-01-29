@@ -2,8 +2,6 @@ import os
 import smtplib
 import feedparser
 import google.generativeai as genai
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from datetime import datetime
 import time
 import re
@@ -12,36 +10,23 @@ import unicodedata
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 문자열 무균실 세탁 (유령문자 박멸) ---
-def clean_str(text):
-    if text is None: return ""
-    text = str(text)
-    # 1. 유니코드 정규화 (이상한 공백을 표준 공백으로)
-    text = unicodedata.normalize('NFKC', text)
-    # 2. 모든 종류의 공백/탭/줄바꿈을 일반 스페이스(ASCII 32)로 단일화
-    text = re.sub(r'\s+', ' ', text)
-    # 3. 유령 공백(\xa0, \u200b) 하드코딩 제거
-    text = text.replace('\xa0', '').replace('\u200b', '')
-    return text.strip()
-
-def extract_email(text):
-    text = clean_str(text)
-    # 정규식으로 순수 이메일만 추출
-    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-    if match:
-        return match.group(0)
-    return ""
-
-# --- [2단계] 환경변수 로드 ---
+# --- [1단계] 환경변수 로드 & DNA 분석 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-EMAIL_USER = extract_email(os.environ.get("EMAIL_USER", ""))
+# 일단 가져옵니다. 세탁은 전송 직전에 '강제'로 합니다.
+EMAIL_USER = os.environ.get("EMAIL_USER", "")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-EMAIL_RECEIVER = extract_email(os.environ.get("EMAIL_RECEIVER", ""))
+EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER", "")
 
-print(f"DEBUG: Sender: {repr(EMAIL_USER)}")
-print(f"DEBUG: Receiver: {repr(EMAIL_RECEIVER)}")
+# [진단] 유령 문자 색출 (로그에 숫자 출력)
+# 만약 에러가 또 나면 로그의 이 숫자를 보면 100% 원인을 알 수 있습니다.
+print("="*30)
+print("🔍 EMAIL_USER DNA ANALYSIS:")
+print(f"Original: '{EMAIL_USER}'")
+# 글자 하나하나의 코드값을 찍어봅니다. (160이 나오면 그게 \xa0입니다)
+print(f"ASCII Codes: {[ord(c) for c in EMAIL_USER]}") 
+print("="*30)
 
-# --- [3단계] 정보 수집 ---
+# --- [정보 수집] ---
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
     "Investing.com": "https://www.investing.com/rss/news.rss",
@@ -54,6 +39,14 @@ RSS_URLS = {
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/" 
 }
 
+def clean_text_body(text):
+    if text is None: return ""
+    text = str(text)
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
 def fetch_news():
     print("Collecting news from The Avengers Squad...")
     all_news = []
@@ -62,14 +55,14 @@ def fetch_news():
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
             for entry in feed.entries[:10]: 
-                title = clean_str(getattr(entry, 'title', 'No Title'))
-                link = clean_str(getattr(entry, 'link', 'No Link'))
-                pubDate = clean_str(getattr(entry, 'published', 'No Date'))
+                title = clean_text_body(getattr(entry, 'title', 'No Title'))
+                link = clean_text_body(getattr(entry, 'link', 'No Link'))
+                pubDate = clean_text_body(getattr(entry, 'published', 'No Date'))
                 content = ""
                 if hasattr(entry, 'content'): content = entry.content[0].value
                 elif hasattr(entry, 'summary_detail'): content = entry.summary_detail.value
                 elif hasattr(entry, 'summary'): content = entry.summary
-                clean_content = clean_str(content)[:10000]
+                clean_content = clean_text_body(content)[:10000]
                 all_news.append(f"[{source}] Title: {title} | Content: {clean_content} | Date: {pubDate} | Link: {link}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
@@ -80,10 +73,12 @@ def analyze_news(news_list):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
+        # Gemini 3.0 모델
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
+        # [복구 완료] 닥터 둠과 전략 위원회 100% 풀버전 프롬프트
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -95,7 +90,7 @@ def analyze_news(news_list):
         1.  **🐻 Dr. Doom (Risk):** Pessimistic. Focuses on flaws, bubbles, debt, and regulatory threats.
         2.  **🐂 The Visionary (Growth):** Optimistic. Focuses on innovation, adoption, and 10x opportunities.
         3.  **🦅 The Hawk (Macro):** Realist. Focuses on Fed rates, Oil, Wars, and Liquidity.
-        4.  **🦊 The Fox (Contrarian):** Skeptic of the crowd. Looks for information asymmetry.
+        4.  **🦊 The Fox (Contrarian):** Skeptic of the crowd. Looks for information asymmetry (Hacker News vs Yahoo).
 
         ---
 
@@ -140,49 +135,46 @@ def analyze_news(news_list):
         ]
 
         response = model.generate_content(prompt, request_options={"timeout": 1000}, safety_settings=safety_settings)
-        return clean_str(response.text)
+        return clean_text_body(response.text)
     except Exception as e:
         return f"Error in analysis: {e}"
 
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
-    report_body = clean_str(report_body)
     
-    msg = MIMEMultipart()
-    
-    # [핵심 변경 1] 제목을 안전한 ASCII 문자로만 구성 (공백 대신 언더바 사용)
-    # "Strategic_Council_Report_YYYY-MM-DD"
-    # 띄어쓰기가 에러의 주범이므로 아예 없애버립니다.
+    # [핵심 1] 제목에 공백 대신 언더바 사용 (안정성 확보)
     safe_date = datetime.now().strftime('%Y-%m-%d')
-    safe_subject = f"Strategic_Council_Report_{safe_date}"
+    subject = f"Strategic_Council_Report_{safe_date}"
     
-    msg['Subject'] = safe_subject
-    msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_RECEIVER
+    # [핵심 2] 전송 직전에 변수를 ASCII로 강제 변환 (방화벽)
+    # ignore 옵션: ASCII가 아닌 유령 문자(\xa0)는 무조건 삭제됨.
+    safe_user = EMAIL_USER.encode('ascii', 'ignore').decode('ascii').strip()
+    safe_receiver = EMAIL_RECEIVER.encode('ascii', 'ignore').decode('ascii').strip()
     
-    # 본문은 UTF-8로 지정
-    msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
+    print(f"DEBUG: Final Safe Sender: '{safe_user}'")
+    
+    # 이메일 본문 수동 조립
+    email_content = f"""From: {safe_user}
+To: {safe_receiver}
+Subject: {subject}
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
 
+{report_body}
+"""
+    
     print("Connecting to Gmail Server...")
-    print(f"Debug - Final Subject: {safe_subject}")
 
     try:
-        server = smtplib.SMTP(SMTP_SERVER, 587)
+        # local_hostname 설정 추가 (헬로 메시지 에러 방지)
+        server = smtplib.SMTP(SMTP_SERVER, 587, local_hostname='localhost')
         server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.login(safe_user, EMAIL_PASSWORD)
         
-        # [핵심 변경 2] 'Bytes' 강제 주입 (파이썬 인코딩 검사 우회)
-        # 1. 메시지 전체를 문자열로 만듭니다.
-        full_msg_str = msg.as_string()
-        
-        # 2. 혹시 남아있을지 모를 유령 공백을 바이트 변환 직전에 최후 제거
-        full_msg_str = full_msg_str.replace('\xa0', ' ')
-        
-        # 3. UTF-8 'Bytes'로 변환합니다. (이러면 파이썬은 ASCII 검사를 안 합니다)
-        full_msg_bytes = full_msg_str.encode('utf-8')
-        
-        # 4. 바이트 상태 그대로 전송합니다.
-        server.sendmail(EMAIL_USER, EMAIL_RECEIVER, full_msg_bytes)
+        # [최종 승부수] UTF-8 바이트로 변환하여 전송
+        # 여기서 safe_user는 이미 100% ASCII임이 보장됨.
+        server.sendmail(safe_user, safe_receiver, email_content.encode('utf-8'))
         
         server.quit()
         print("✅ Email sent successfully!")
