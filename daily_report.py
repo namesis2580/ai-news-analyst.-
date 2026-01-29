@@ -6,12 +6,11 @@ from email.message import EmailMessage
 from datetime import datetime
 import time
 import re
-import unicodedata
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [핵심] 노이즈 박멸 함수 (유니코드 정규화) ---
+# --- [핵심] 노이즈 및 유령 문자 물리적 박멸 함수 ---
 def clean_text(text):
     if text is None: return ""
     text = str(text)
@@ -19,13 +18,23 @@ def clean_text(text):
     # 1. HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text)
     
-    # 2. 유니코드 정규화 (NFKC) - 유령 공백 박멸
-    text = unicodedata.normalize('NFKC', text)
+    # 2. [강력] 문자 코드를 이용한 물리적 치환
+    # \xa0 (ASCII 160번)을 일반 공백 (ASCII 32번)으로 강제 변환
+    # 이모지나 다른 깨질 수 있는 문자들도 여기서 걸러낼 수 있습니다.
+    cleaned_chars = []
+    for char in text:
+        # \xa0(160)은 무조건 공백으로
+        if ord(char) == 160:
+            cleaned_chars.append(' ')
+        else:
+            cleaned_chars.append(char)
+            
+    text = "".join(cleaned_chars)
     
-    # 3. 잔재 제거
-    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
+    # 3. HTML 엔티티 제거
+    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
     
-    # 4. 공백 축소
+    # 4. 공백 정리
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()
@@ -82,7 +91,7 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # [주의] 내일 아침 할당량 리셋 후 정상 작동함 (Gemini 3.0)
+        # 내일 아침 리셋 후 사용 (Gemini 3.0)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -156,17 +165,17 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # 1. 본문 세탁
+    # 1. 본문 다시 한번 물리적 세탁
     report_body = clean_text(report_body)
     
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # 2. 제목 세탁
-    subject_text = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
+    # 2. 제목에서 이모지 제거 및 세탁 (안정성 확보)
+    # 🌌 같은 이모지가 특정 환경에서 인코딩 에러를 유발하므로 텍스트로 대체합니다.
+    subject_text = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg['Subject'] = clean_text(subject_text)
     
-    # [수정] 여기가 에러 났던 부분입니다. 따옴표를 정확히 닫았습니다.
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
