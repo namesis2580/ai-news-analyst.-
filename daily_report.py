@@ -12,33 +12,34 @@ import unicodedata
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 이메일 주소 '수술' 함수 (Regex Extraction) ---
+# --- [1단계] 이메일 주소 '수술' 함수 ---
 def extract_pure_email(text):
     if text is None: return ""
     text = str(text)
-    # 1. 모든 유령 공백 제거
+    # 1. 모든 유령 공백 제거 (ASCII 160번 등)
     text = "".join(text.split())
-    # 2. 정규표현식으로 '이메일 주소 패턴'만 강제 추출
+    # 2. 정규표현식으로 이메일만 추출
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     if match:
         return match.group(0)
-    else:
-        return text.encode('ascii', 'ignore').decode('ascii').strip()
+    # 실패 시 ASCII가 아닌 건 다 지움
+    return text.encode('ascii', 'ignore').decode('ascii').strip()
 
-# --- [2단계] 본문 정화 ---
+# --- [2단계] 본문 정화 (한글 보존) ---
 def clean_text_body(text):
     if text is None: return ""
     text = str(text)
-    text = unicodedata.normalize('NFKC', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
+    text = unicodedata.normalize('NFKC', text) # 유니코드 정규화
+    text = re.sub(r'<[^>]+>', '', text) # 태그 제거
+    # 유령 공백(\xa0)을 일반 공백(chr 32)으로 강제 치환
+    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 # --- 환경변수 로드 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# 이메일 주소 추출
+# 이메일 주소 추출 (정규표현식 사용)
 raw_user = os.environ.get("EMAIL_USER", "")
 EMAIL_USER = extract_pure_email(raw_user)
 
@@ -47,6 +48,7 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
 raw_receiver = os.environ.get("EMAIL_RECEIVER", "")
 EMAIL_RECEIVER = extract_pure_email(raw_receiver)
 
+# 디버깅: 이메일 주소가 깨끗한지 확인
 print(f"DEBUG: Cleaned EMAIL_USER: {repr(EMAIL_USER)}")
 print(f"DEBUG: Cleaned EMAIL_RECEIVER: {repr(EMAIL_RECEIVER)}")
 
@@ -70,20 +72,14 @@ def fetch_news():
         try:
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
-            
             for entry in feed.entries[:10]: 
                 title = clean_text_body(getattr(entry, 'title', 'No Title'))
                 link = clean_text_body(getattr(entry, 'link', 'No Link'))
                 pubDate = clean_text_body(getattr(entry, 'published', 'No Date'))
-                
                 content = ""
-                if hasattr(entry, 'content'):
-                    content = entry.content[0].value
-                elif hasattr(entry, 'summary_detail'):
-                    content = entry.summary_detail.value
-                elif hasattr(entry, 'summary'):
-                    content = entry.summary
-                
+                if hasattr(entry, 'content'): content = entry.content[0].value
+                elif hasattr(entry, 'summary_detail'): content = entry.summary_detail.value
+                elif hasattr(entry, 'summary'): content = entry.summary
                 clean_content = clean_text_body(content)[:10000]
                 all_news.append(f"[{source}] Title: {title} | Content: {clean_content} | Date: {pubDate} | Link: {link}")
         except Exception as e:
@@ -95,14 +91,12 @@ def analyze_news(news_list):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
-        
-        # 모델: Gemini 3 Flash Preview (내일 아침 리셋 후 정상 작동)
+        # 내일 아침 리셋 후 정상 작동 (Gemini 3.0)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
-        
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
-        # 닥터 둠과 전략 위원회 프롬프트
+        # [복구 완료] 닥터 둠과 전략 위원회 전체 프롬프트 (삭제 없음)
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -158,13 +152,8 @@ def analyze_news(news_list):
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
-        response = model.generate_content(
-            prompt, 
-            request_options={"timeout": 1000},
-            safety_settings=safety_settings
-        )
+        response = model.generate_content(prompt, request_options={"timeout": 1000}, safety_settings=safety_settings)
         return clean_text_body(response.text)
-        
     except Exception as e:
         return f"Error in analysis: {e}"
 
@@ -174,32 +163,35 @@ def send_email(report_body):
     
     msg = MIMEMultipart()
     
-    # [핵심 수정] 제목을 문자열 복사가 아니라 '조립'합니다.
-    # 이렇게 하면 소스코드 복사 과정에서 유령 공백이 끼어들 틈이 없습니다.
-    # "Strategic Council Report - YYYY-MM-DD"
+    # [핵심] 제목 조립 시 '공백 문자'를 코드(chr 32)로 생성 (오타/유령문자 방지)
+    # "Strategic Council Report - 2026-01-01"
+    sp = chr(32) # 안전한 공백
     title_parts = ["Strategic", "Council", "Report", "-", datetime.now().strftime('%Y-%m-%d')]
-    safe_subject = " ".join(title_parts)
+    safe_subject = sp.join(title_parts)
     
-    # 한번 더 안전장치: ASCII 강제 변환
-    safe_subject = safe_subject.encode('ascii', 'ignore').decode('ascii').strip()
-    
+    # 한번 더 확실하게 ASCII만 남기기
+    safe_subject = safe_subject.encode('ascii', 'ignore').decode('ascii')
+
     msg['Subject'] = safe_subject
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
-    
     msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
 
     print("Connecting to Gmail Server...")
     print(f"Debug - Final Subject: {safe_subject}")
-    
+
     try:
-        # [디버깅] SMTP 통신 과정을 로그에 출력 (문제 발생 시 원인 파악용)
         server = smtplib.SMTP(SMTP_SERVER, 587)
-        server.set_debuglevel(1) # 로그 상세 출력 켜기
-        
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
+        
+        # [핵심 변경] send_message 대신 sendmail 사용
+        # send_message는 내부적으로 인코딩 검사를 하다가 에러가 날 수 있음.
+        # as_string()으로 전체를 문자열로 바꾼 뒤, 유령 문자를 최후의 순간에 한 번 더 제거하고 보냄.
+        full_email = msg.as_string()
+        full_email = full_email.replace('\xa0', ' ') # 최후의 방어선
+        
+        server.sendmail(EMAIL_USER, EMAIL_RECEIVER, full_email)
         server.quit()
         print("✅ Email sent successfully!")
     except Exception as e:
@@ -209,7 +201,6 @@ if __name__ == "__main__":
     news_data = fetch_news()
     if news_data:
         report = analyze_news(news_data)
-        
         if report and "Error" not in report:
             send_email(report)
         else:
