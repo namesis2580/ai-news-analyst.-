@@ -4,45 +4,73 @@ import feedparser
 import google.generativeai as genai
 from email.message import EmailMessage
 from datetime import datetime
+import time
+import re
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- 데이터 세탁 함수 ---
+# --- [핵심] 노이즈 박멸 함수 ---
 def clean_text(text):
     if text is None: return ""
-    return str(text).replace('\xa0', ' ').strip()
+    text = str(text)
+    text = re.sub(r'<[^>]+>', '', text) # 태그 삭제
+    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
+    text = re.sub(r'\s+', ' ', text) # 공백 정리
+    return text.strip()
 
-# --- 환경변수 불러오기 ---
-GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
-EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
-EMAIL_PASSWORD = clean_text(os.environ.get("EMAIL_PASSWORD"))
-EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
+# --- 환경변수 ---
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+EMAIL_USER = os.environ.get("EMAIL_USER")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER")
 
-# --- RSS 피드 주소 (데이터 소스) ---
+# --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
+    # 1. [Base] 시장의 기준점
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
+    "Investing.com": "https://www.investing.com/rss/news.rss",
+    
+    # 2. [Trend] 대중의 관심사
     "Google News (Business)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
     "Google News (Tech)": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en",
-    "Investing.com": "https://www.investing.com/rss/news.rss",
+    
+    # 3. [Alpha] 남들이 못 보는 선행지표
+    "Hacker News": "https://news.ycombinator.com/rss",     
+    "TechCrunch": "https://techcrunch.com/feed/",          
+    
+    # 4. [Deep Dive] 구조적 통찰
+    "Project Syndicate": "https://www.project-syndicate.org/rss", 
+    "OilPrice": "https://oilprice.com/rss/main",           
+    "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/" 
 }
 
 def fetch_news():
-    print("Collecting news...")
+    print("Collecting news from The Avengers Squad...")
     all_news = []
     for source, url in RSS_URLS.items():
         try:
             feed = feedparser.parse(url)
             print(f"Fetched {len(feed.entries)} articles from {source}")
-            for entry in feed.entries[:20]: # 소스당 상위 20개 추출
+            
+            for entry in feed.entries[:10]: 
                 title = clean_text(getattr(entry, 'title', 'No Title'))
                 link = clean_text(getattr(entry, 'link', 'No Link'))
                 pubDate = clean_text(getattr(entry, 'published', 'No Date'))
-                # [핵심 업그레이드] 요약문(Summary)을 가져와서 AI에게 제공 (분석 품질 향상)
-                summary = clean_text(getattr(entry, 'summary', 'No Summary'))
                 
-                # AI가 읽기 편한 포맷으로 변환
-                all_news.append(f"[{source}] Title: {title} | Summary: {summary[:300]} | Date: {pubDate} | Link: {link}")
+                # 전문 확보 로직
+                content = ""
+                if hasattr(entry, 'content'):
+                    content = entry.content[0].value
+                elif hasattr(entry, 'summary_detail'):
+                    content = entry.summary_detail.value
+                elif hasattr(entry, 'summary'):
+                    content = entry.summary
+                
+                # 노이즈 박멸 후 1만 자 확보
+                clean_content = clean_text(content)[:10000]
+                
+                all_news.append(f"[{source}] Title: {title} | Content: {clean_content} | Date: {pubDate} | Link: {link}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
     return all_news
@@ -53,84 +81,62 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델: Gemini 3 Flash Preview (최신 성능)
+        # 모델: Gemini 3 Flash Preview
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
-        print("Analyzing news with Chief Strategic Architect v10.0 (RSS Mode)...")
+        print("Summoning The Strategic Council (Analysis Avengers)...")
+        print(f"Input Data Length: {len(news_text)} characters") 
         
-        # --- [최종 검증된 RSS 전용 프롬프트] ---
+        # --- [정보 분석 어벤져스 프롬프트: B타입 (승자)] ---
         prompt = f"""
-        # 🌌 CHIEF STRATEGIC ARCHITECT v10.0 (RSS INTEGRATED FINAL)
+        # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
-        **SYSTEM STATUS:** OFFLINE MODE.
-        **INPUT SOURCE:** The provided `[RSS_RAW_DATA]` below.
+        **CONTEXT:** You are the **'Chief Architect'** presiding over a high-stakes roundtable.
+        **INPUT:** The provided `[RSS_RAW_DATA]` (Cleaned, High-Quality).
         **OUTPUT LANGUAGE:** Korean (한국어).
 
-        # 🛡️ MODULE 0: TRUTH PROTOCOL (RSS EDITION)
-        **MANDATE:**
-        1. **Expand:** Analyze `[RSS_RAW_DATA]` to identify the single most critical market trend (**[STRATEGIC_VECTOR]**).
-        2. **Ingest (Simulated Search):** Do not browse the web. Instead, **SCAN and FILTER** the provided text to fill the 6 Buffers.
-        3. **Compute:** Apply **Module 1, 5-FUSION ENGINE** lenses.
-        4. **Report:** Synthesize the final briefing.
+        **👥 THE COUNCIL MEMBERS (Your Internal Personas):**
+        1.  **🐻 Dr. Doom (Risk):** Pessimistic. Focuses on flaws, bubbles, debt, and regulatory threats.
+        2.  **🐂 The Visionary (Growth):** Optimistic. Focuses on innovation, adoption, and 10x opportunities.
+        3.  **🦅 The Hawk (Macro):** Realist. Focuses on Fed rates, Oil, Wars, and Liquidity.
+        4.  **🦊 The Fox (Contrarian):** Skeptic of the crowd. Looks for information asymmetry (Hacker News vs Yahoo).
 
-        ### STEP 1: INPUT AMPLIFIER
-        * **Trigger:** Extract the **[STRATEGIC_VECTOR]** (e.g., "AI Bubble Risk", "Fed Rate Policy").
-        * **Persona Scaling:** Determine Dynamic Weighting (%) based on the threat level.
+        ---
 
-        ### STEP 2~7: BUFFER SIMULATION (Internal Scan)
-        * **[Official]:** Filter text for: Gov, Fed, SEC, Policy, Regulation.
-        * **[Tech]:** Filter text for: AI, Innovation, R&D, Patent.
-        * **[Market]:** Filter text for: Stock moves, Earnings, Analyst Ratings.
-        * **[Social/Sentiment]:** Analyze the *tone* of the headlines (Fear/Greed).
+        ## 📝 REPORT STRUCTURE (Strictly follow this)
+
+        ### CHAPTER 1. 👑 The Architect's Verdict (최종 결론)
+        * **Strategic Vector:** (The single most important trend today).
+        * **Market Stance:** [Aggressive Buy / Cautious Buy / Neutral / Sell / Short].
+        * **Confidence Score:** [0-100%].
+        * **The Bottom Line:** (Synthesize the council's debate into one actionable directive).
+
+        ### CHAPTER 2. 🗣️ The Council's Debate (심층 분석)
+        *In this section, simulate a short, intense debate between the personas based on the data.*
         
-        ---
+        * **🐻 Dr. Doom says:** "Wait, look at the risks in..."
+        * **🐂 The Visionary counters:** "But you are missing the growth signal in..."
+        * **🦅 The Hawk interrupts:** "Actually, the macro environment in suggests..."
+        * **🦊 The Fox whispers:** "The crowd is wrong about because..."
 
-        ## 🧠 MODULE 1: IDENTITY & LOGIC 
-        **IDENTITY:** Chief Strategic Architect.
-        **Goal:** **Wealth Max (ROI)** & **Vitality**.
+        ### CHAPTER 3. 👁️ Evidence & Triangulation (근거 데이터)
+        *Validate the debate with specific data points from the 9 Sources.*
+        * **[Macro/Energy]:** (Project Syndicate/OilPrice)
+        * **[Tech/VC]:** (Hacker News/TechCrunch)
+        * **[Market/Money]:** (Yahoo/CoinDesk)
+        * **[Conflict]:** (Where do the sources disagree?)
 
-        **🏛️ 5-FUSION ENGINE (Apply these lenses):**
-        1. **🔥 PILOT:** Risk management. Enforce Barbell Strategy (Cash vs High Risk).
-        2. **🌀 HYDRA:** Market Sentiment. Is the crowd wrong?
-        3. **🔮 CHIMERA:** Future Scenarios. What is the next domino to fall?
-        4. **🐍 OUROBOROS:** Via Negativa. What is NOT being said?
-        5. **🌟 ORACLE:** Intuition on complexity.
-
-        ---
-
-        ## 📝 MODULE 2: REPORT FORMAT (Write in Korean)
-
-        ### CHAPTER 1. 🏛️ The Verdict (결론)
-        * **Active Persona:** [Mode : Weight %].
-        * **Market Status:** [Bullish / Bearish / Neutral].
-        * **Strategic Answer:** (One powerful sentence strategy based on **[STRATEGIC_VECTOR]**).
-        * **Confidence:** [0-100%].
-
-        ### CHAPTER 2. 👁️ 6-Point Cross-Verification (Data Evidence)
-        *Extract evidence strictly from `[RSS_RAW_DATA]`. Use [N/A] if data is missing.*
-        * **[🏛️ Official/Policy]:** (Policies, Fed, Gov news)
-        * **[⚙️ Tech/Innovation]:** (New Tech, AI, Products)
-        * **[🔍 Market/Google]:** (Stock Prices, Earnings)
-        * **[🗣️ Sentiment]:** (Implied Market Sentiment)
-        * **[⚠️ Conflict Check]:** (Any contradictions in the news?)
-
-        ### CHAPTER 3. ⚔️ Deep Analysis (Actionable Intel)
-        * **[Logic Trace]:** (Briefly explain the reasoning using the 5-Fusion Engine).
-        * **[Action Plan]:**
-            * **Step 1 (Immediate):** (Buy/Sell/Hold specific sectors)
-            * **Step 2 (Strategic):** (Long-term positioning)
-
-        ### CHAPTER 4. 😈 Devil’s Audit
-        * **Flaw:** (Biggest weakness in this view).
-        * **Kill Switch:** (Exact condition to abort this strategy).
+        ### CHAPTER 4. ⚔️ Action Plan (Execution)
+        * **Step 1 (Defense):** (How to not lose money today).
+        * **Step 2 (Offense):** (Where to attack for profit).
+        * **Kill Switch:** (Condition to exit immediately).
 
         ---
-        
-        **[RSS_RAW_DATA TO ANALYZE]**
-        {news_text[:60000]}
+        **[RSS_RAW_DATA]**
+        {news_text}
         """
         
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 1000})
         return clean_text(response.text)
         
     except Exception as e:
@@ -142,7 +148,7 @@ def send_email(report_body):
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    msg['Subject'] = f"🚀 Strategic Briefing - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['Subject'] = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
@@ -160,7 +166,9 @@ if __name__ == "__main__":
     news_data = fetch_news()
     if news_data:
         report = analyze_news(news_data)
-        print("Report Generated. Sending...")
-        send_email(report)
+        if report and "Error" not in report:
+            send_email(report)
+        else:
+            print("Report generation failed or returned error.")
     else:
         print("No news found.")
