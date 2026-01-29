@@ -4,9 +4,6 @@ import feedparser
 import google.generativeai as genai
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-# [핵심] 헤더를 인코딩 처리하는 전용 모듈 호출
-from email.header import Header
-from email.utils import formataddr
 from datetime import datetime
 import time
 import re
@@ -15,21 +12,21 @@ import unicodedata
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 이메일 주소 및 문자열 정밀 세탁 ---
+# --- [1단계] 문자열 무균실 세탁 (유령문자 박멸) ---
 def clean_str(text):
     if text is None: return ""
     text = str(text)
-    # 유니코드 정규화 (NFKC)
+    # 1. 유니코드 정규화 (이상한 공백을 표준 공백으로)
     text = unicodedata.normalize('NFKC', text)
-    # 모든 종류의 공백을 일반 스페이스(ASCII 32)로 치환
+    # 2. 모든 종류의 공백/탭/줄바꿈을 일반 스페이스(ASCII 32)로 단일화
     text = re.sub(r'\s+', ' ', text)
-    # 제어 문자 및 유령 공백 제거
+    # 3. 유령 공백(\xa0, \u200b) 하드코딩 제거
     text = text.replace('\xa0', '').replace('\u200b', '')
     return text.strip()
 
 def extract_email(text):
-    # 정규식으로 이메일 주소만 핀셋으로 뽑아냄
     text = clean_str(text)
+    # 정규식으로 순수 이메일만 추출
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     if match:
         return match.group(0)
@@ -44,7 +41,7 @@ EMAIL_RECEIVER = extract_email(os.environ.get("EMAIL_RECEIVER", ""))
 print(f"DEBUG: Sender: {repr(EMAIL_USER)}")
 print(f"DEBUG: Receiver: {repr(EMAIL_RECEIVER)}")
 
-# --- [정보 수집 어벤져스] ---
+# --- [3단계] 정보 수집 ---
 RSS_URLS = {
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
     "Investing.com": "https://www.investing.com/rss/news.rss",
@@ -83,12 +80,10 @@ def analyze_news(news_list):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
-        # 내일 아침 리셋 후 정상 작동 (Gemini 3.0)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
-        # 닥터 둠과 친구들 (완전체)
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -122,6 +117,10 @@ def analyze_news(news_list):
 
         ### CHAPTER 3. 👁️ Evidence & Triangulation (근거 데이터)
         *Validate the debate with specific data points from the 9 Sources.*
+        * **[Macro/Energy]:** (Project Syndicate/OilPrice)
+        * **[Tech/VC]:** (Hacker News/TechCrunch)
+        * **[Market/Money]:** (Yahoo/CoinDesk)
+        * **[Conflict]:** (Where do the sources disagree?)
 
         ### CHAPTER 4. ⚔️ Action Plan (Execution)
         * **Step 1 (Defense):** (How to not lose money today).
@@ -151,29 +150,40 @@ def send_email(report_body):
     
     msg = MIMEMultipart()
     
-    # [Protocol 10.0 핵심 기술]
-    # 일반 문자열 대입이 아니라, 'Header' 객체를 사용하여 UTF-8 인코딩을 명시합니다.
-    # 이렇게 하면 파이썬이 내부적으로 ASCII로 변환하려다 실패하는 것을 원천 차단합니다.
-    subject_text = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    msg['Subject'] = Header(subject_text, 'utf-8')
+    # [핵심 변경 1] 제목을 안전한 ASCII 문자로만 구성 (공백 대신 언더바 사용)
+    # "Strategic_Council_Report_YYYY-MM-DD"
+    # 띄어쓰기가 에러의 주범이므로 아예 없애버립니다.
+    safe_date = datetime.now().strftime('%Y-%m-%d')
+    safe_subject = f"Strategic_Council_Report_{safe_date}"
     
-    # From/To 헤더도 안전하게 처리
-    msg['From'] = Header(EMAIL_USER, 'utf-8')
-    msg['To'] = Header(EMAIL_RECEIVER, 'utf-8')
+    msg['Subject'] = safe_subject
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_RECEIVER
     
+    # 본문은 UTF-8로 지정
     msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
 
     print("Connecting to Gmail Server...")
-    # 디버깅: 인코딩된 헤더가 어떻게 보이는지 확인
-    print(f"Debug - Encoded Subject: {msg['Subject']}")
+    print(f"Debug - Final Subject: {safe_subject}")
 
     try:
         server = smtplib.SMTP(SMTP_SERVER, 587)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASSWORD)
         
-        # send_message 메서드는 Header 객체가 설정된 msg를 가장 안전하게 처리합니다.
-        server.send_message(msg)
+        # [핵심 변경 2] 'Bytes' 강제 주입 (파이썬 인코딩 검사 우회)
+        # 1. 메시지 전체를 문자열로 만듭니다.
+        full_msg_str = msg.as_string()
+        
+        # 2. 혹시 남아있을지 모를 유령 공백을 바이트 변환 직전에 최후 제거
+        full_msg_str = full_msg_str.replace('\xa0', ' ')
+        
+        # 3. UTF-8 'Bytes'로 변환합니다. (이러면 파이썬은 ASCII 검사를 안 합니다)
+        full_msg_bytes = full_msg_str.encode('utf-8')
+        
+        # 4. 바이트 상태 그대로 전송합니다.
+        server.sendmail(EMAIL_USER, EMAIL_RECEIVER, full_msg_bytes)
+        
         server.quit()
         print("✅ Email sent successfully!")
     except Exception as e:
