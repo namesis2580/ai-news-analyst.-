@@ -3,16 +3,15 @@ import smtplib
 import feedparser
 import google.generativeai as genai
 from email.message import EmailMessage
-# Header import 제거
 from datetime import datetime
 import time
 import re
-import unicodedata  # [추가] 유령 공백 박멸을 위한 강력한 도구
+import unicodedata
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [핵심] 노이즈 박멸 함수 (유니코드 정규화 적용) ---
+# --- [핵심] 노이즈 박멸 함수 (유니코드 정규화) ---
 def clean_text(text):
     if text is None: return ""
     text = str(text)
@@ -20,14 +19,13 @@ def clean_text(text):
     # 1. HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text)
     
-    # 2. [강력] 유니코드 정규화 (NFKC 모드)
-    # \xa0(Non-breaking space) 같은 특수 공백을 일반 공백으로 강제 변환합니다.
+    # 2. 유니코드 정규화 (NFKC) - 유령 공백 박멸
     text = unicodedata.normalize('NFKC', text)
     
-    # 3. 혹시 모를 잔재 제거 (확인 사살)
+    # 3. 잔재 제거
     text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
     
-    # 4. 여러 공백을 하나로 축소
+    # 4. 공백 축소
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()
@@ -84,7 +82,7 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델: Gemini 3 Flash Preview (내일 할당량 리셋 시 작동)
+        # [주의] 내일 아침 할당량 리셋 후 정상 작동함 (Gemini 3.0)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -158,14 +156,42 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # 1. 보고서 본문 강력 세탁 (유령 공백 제거)
+    # 1. 본문 세탁
     report_body = clean_text(report_body)
     
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # 2. 제목 강력 세탁 (유령 공백 제거)
+    # 2. 제목 세탁
     subject_text = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg['Subject'] = clean_text(subject_text)
     
-    msg['From
+    # [수정] 여기가 에러 났던 부분입니다. 따옴표를 정확히 닫았습니다.
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_RECEIVER
+
+    print("Connecting to Gmail Server...")
+    try:
+        with smtplib.SMTP(SMTP_SERVER, 587) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASSWORD)
+            server.send_message(msg)
+            print("✅ Email sent successfully!")
+    except Exception as e:
+        print(f"❌ Failed to send email: {e}")
+
+if __name__ == "__main__":
+    news_data = fetch_news()
+    if news_data:
+        report = analyze_news(news_data)
+        
+        if report and "Error" not in report:
+            send_email(report)
+        else:
+            print("\n❌ Report generation failed!")
+            print("="*30)
+            print("👇 ERROR DETAILS (원인은 아래와 같습니다) 👇")
+            print(report)
+            print("="*30)
+    else:
+        print("No news found.")
