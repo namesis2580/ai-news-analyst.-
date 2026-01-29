@@ -6,23 +6,23 @@ from datetime import datetime
 import time
 import re
 import unicodedata
+# [수정 1] 이메일 표준 라이브러리 추가
+from email.mime.text import MIMEText
+from email.header import Header
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
 # --- [1단계] 환경변수 로드 & DNA 분석 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-# 일단 가져옵니다. 세탁은 전송 직전에 '강제'로 합니다.
 EMAIL_USER = os.environ.get("EMAIL_USER", "")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
 EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER", "")
 
-# [진단] 유령 문자 색출 (로그에 숫자 출력)
-# 만약 에러가 또 나면 로그의 이 숫자를 보면 100% 원인을 알 수 있습니다.
+# [진단] 유령 문자 색출
 print("="*30)
 print("🔍 EMAIL_USER DNA ANALYSIS:")
 print(f"Original: '{EMAIL_USER}'")
-# 글자 하나하나의 코드값을 찍어봅니다. (160이 나오면 그게 \xa0입니다)
 print(f"ASCII Codes: {[ord(c) for c in EMAIL_USER]}") 
 print("="*30)
 
@@ -78,7 +78,6 @@ def analyze_news(news_list):
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
-        # [복구 완료] 닥터 둠과 전략 위원회 100% 풀버전 프롬프트
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -142,39 +141,35 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # [핵심 1] 제목에 공백 대신 언더바 사용 (안정성 확보)
+    # [안전 조치 1] 본문 내 유령 문자(\xa0)를 일반 공백으로 치환
+    if report_body:
+        report_body = report_body.replace('\xa0', ' ')
+
     safe_date = datetime.now().strftime('%Y-%m-%d')
-    subject = f"Strategic_Council_Report_{safe_date}"
+    subject_text = f"Strategic_Council_Report_{safe_date}"
     
-    # [핵심 2] 전송 직전에 변수를 ASCII로 강제 변환 (방화벽)
-    # ignore 옵션: ASCII가 아닌 유령 문자(\xa0)는 무조건 삭제됨.
+    # 이메일 주소 세탁
     safe_user = EMAIL_USER.encode('ascii', 'ignore').decode('ascii').strip()
     safe_receiver = EMAIL_RECEIVER.encode('ascii', 'ignore').decode('ascii').strip()
     
     print(f"DEBUG: Final Safe Sender: '{safe_user}'")
     
-    # 이메일 본문 수동 조립
-    email_content = f"""From: {safe_user}
-To: {safe_receiver}
-Subject: {subject}
-MIME-Version: 1.0
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
+    # [수정 2] MIMEText 객체 사용하여 UTF-8 강제
+    # 'plain'은 일반 텍스트, 'html'을 원하면 'html'로 변경
+    msg = MIMEText(report_body, 'plain', 'utf-8')
+    msg['Subject'] = Header(subject_text, 'utf-8')
+    msg['From'] = safe_user
+    msg['To'] = safe_receiver
 
-{report_body}
-"""
-    
     print("Connecting to Gmail Server...")
 
     try:
-        # local_hostname 설정 추가 (헬로 메시지 에러 방지)
         server = smtplib.SMTP(SMTP_SERVER, 587, local_hostname='localhost')
         server.starttls()
         server.login(safe_user, EMAIL_PASSWORD)
         
-        # [최종 승부수] UTF-8 바이트로 변환하여 전송
-        # 여기서 safe_user는 이미 100% ASCII임이 보장됨.
-        server.sendmail(safe_user, safe_receiver, email_content.encode('utf-8'))
+        # [수정 3] send_message 사용 (인코딩 자동 처리)
+        server.send_message(msg)
         
         server.quit()
         print("✅ Email sent successfully!")
