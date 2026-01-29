@@ -3,6 +3,7 @@ import smtplib
 import feedparser
 import google.generativeai as genai
 from email.message import EmailMessage
+from email.header import Header
 from datetime import datetime
 import time
 import re
@@ -10,36 +11,37 @@ import re
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [핵심] 노이즈 박멸 함수 ---
+# --- [핵심] 노이즈 박멸 함수 (가장 먼저 정의) ---
 def clean_text(text):
     if text is None: return ""
     text = str(text)
-    text = re.sub(r'<[^>]+>', '', text) # 태그 삭제
-    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
-    text = re.sub(r'\s+', ' ', text) # 공백 정리
+    # HTML 태그 제거
+    text = re.sub(r'<[^>]+>', '', text) 
+    # 특수문자 및 유령 공백(\xa0) 제거
+    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
+    # 여러 공백을 하나로
+    text = re.sub(r'\s+', ' ', text) 
     return text.strip()
 
-# --- 환경변수 ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-EMAIL_USER = os.environ.get("EMAIL_USER")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER")
+# --- 환경변수 (여기서 clean_text로 세탁해서 가져옴) ---
+# [수정] 환경변수에 섞여 있을지 모르는 공백(\xa0)을 미리 제거합니다.
+GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
+EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
+EMAIL_PASSWORD = clean_text(os.environ.get("EMAIL_PASSWORD")) # 비번은 공백 제거 주의 (일반적으로는 strip만 해도 됨)
+EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
+
+# 비밀번호는 clean_text를 쓰면 특수문자가 변형될 수 있으므로 raw data에서 strip만 적용
+if os.environ.get("EMAIL_PASSWORD"):
+    EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD").strip()
 
 # --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
-    # 1. [Base] 시장의 기준점
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
     "Investing.com": "https://www.investing.com/rss/news.rss",
-    
-    # 2. [Trend] 대중의 관심사
-    "Google News (Business)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+    "Google News (Biz)": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
     "Google News (Tech)": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en",
-    
-    # 3. [Alpha] 남들이 못 보는 선행지표
     "Hacker News": "https://news.ycombinator.com/rss",     
     "TechCrunch": "https://techcrunch.com/feed/",          
-    
-    # 4. [Deep Dive] 구조적 통찰
     "Project Syndicate": "https://www.project-syndicate.org/rss", 
     "OilPrice": "https://oilprice.com/rss/main",           
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/" 
@@ -58,7 +60,6 @@ def fetch_news():
                 link = clean_text(getattr(entry, 'link', 'No Link'))
                 pubDate = clean_text(getattr(entry, 'published', 'No Date'))
                 
-                # 전문 확보 로직
                 content = ""
                 if hasattr(entry, 'content'):
                     content = entry.content[0].value
@@ -67,9 +68,7 @@ def fetch_news():
                 elif hasattr(entry, 'summary'):
                     content = entry.summary
                 
-                # 노이즈 박멸 후 1만 자 확보
                 clean_content = clean_text(content)[:10000]
-                
                 all_news.append(f"[{source}] Title: {title} | Content: {clean_content} | Date: {pubDate} | Link: {link}")
         except Exception as e:
             print(f"Error fetching {source}: {e}")
@@ -81,13 +80,13 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델: Gemini 3 Flash Preview
+        # 모델: Gemini 3 Flash Preview (유지)
+        # 경고 메시지는 무시해도 됩니다. 아직 v3 프리뷰는 정상 작동합니다.
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
-        # --- [정보 분석 어벤져스 프롬프트: B타입 (승자)] ---
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -148,7 +147,10 @@ def send_email(report_body):
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    msg['Subject'] = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
+    # [수정] 제목에 이모지가 들어가면 인코딩 에러가 날 수 있으므로 Header 객체 사용
+    subject_text = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
+    msg['Subject'] = Header(subject_text, 'utf-8')
+    
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
