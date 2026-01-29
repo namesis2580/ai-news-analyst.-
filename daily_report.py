@@ -2,7 +2,6 @@ import os
 import smtplib
 import feedparser
 import google.generativeai as genai
-# [변경] 기존 EmailMessage 대신 더 강력한 MIME 모듈 사용
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
@@ -13,37 +12,46 @@ import unicodedata
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [1단계] 환경변수 정화 (이메일 주소용) ---
-def sanitize_env_var(value):
-    if value is None: return ""
-    value = str(value)
-    # 유령 공백 제거 및 ASCII 강제 변환 (이메일 주소에 특수문자 불가)
-    return value.replace('\xa0', '').encode('ascii', 'ignore').decode('ascii').strip()
+# --- [1단계] 이메일 주소 '수술' 함수 (Regex Extraction) ---
+def extract_pure_email(text):
+    if text is None: return ""
+    text = str(text)
+    # 1. 모든 유령 공백 제거
+    text = text.replace('\xa0', '').strip()
+    # 2. 정규표현식으로 '이메일 주소 패턴'만 강제 추출
+    # 예: "My Name \xa0 <user@gmail.com>" -> "user@gmail.com"
+    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+    if match:
+        return match.group(0)
+    else:
+        # 추출 실패 시에도 ASCII가 아닌 건 다 지워서 리턴
+        return text.encode('ascii', 'ignore').decode('ascii').strip()
 
-# --- [2단계] 본문 정화 (한글 보존, 유령 문자 박멸) ---
+# --- [2단계] 본문 정화 (한글 보존) ---
 def clean_text_body(text):
     if text is None: return ""
     text = str(text)
-    
-    # 1. 유니코드 정규화 (NFKC)
     text = unicodedata.normalize('NFKC', text)
-    
-    # 2. HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text)
-    
-    # 3. 유령 공백(\xa0) 및 제로 위드 스페이스(\u200b) 강제 치환
-    text = text.replace('\xa0', ' ').replace('\u200b', '')
-    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
-    
-    # 4. 공백 정리
+    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# --- 환경변수 로드 ---
+# --- 환경변수 로드 및 수술 집도 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-EMAIL_USER = sanitize_env_var(os.environ.get("EMAIL_USER"))
+
+# [핵심] 여기서 이메일 주소만 쏙 뽑아냅니다.
+raw_email_user = os.environ.get("EMAIL_USER", "")
+EMAIL_USER = extract_pure_email(raw_email_user)
+
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
-EMAIL_RECEIVER = sanitize_env_var(os.environ.get("EMAIL_RECEIVER"))
+
+raw_email_receiver = os.environ.get("EMAIL_RECEIVER", "")
+EMAIL_RECEIVER = extract_pure_email(raw_email_receiver)
+
+# 디버깅: 추출된 이메일이 깨끗한지 길이로 확인 (내용은 보안상 출력 X)
+print(f"Debug: Extracted EMAIL_USER length: {len(EMAIL_USER)}")
+print(f"Debug: Extracted EMAIL_RECEIVER length: {len(EMAIL_RECEIVER)}")
 
 # --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
@@ -165,33 +173,32 @@ def analyze_news(news_list):
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # 1. 본문 다시 한번 정화
+    # 본문 정화
     report_body = clean_text_body(report_body)
     
-    # [핵심 변경] MIMEMultipart 사용 (EmailMessage 폐기)
-    # 이 방식은 'utf-8' 인코딩을 명시적으로 지정하여 ASCII 에러를 원천 차단합니다.
+    # MIMEMultipart 사용 (안정성 최우선)
     msg = MIMEMultipart()
     
-    # 제목도 ASCII로 강제 변환하여 안전하게 넣음
+    # 제목 ASCII 강제 변환
     raw_subject = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    safe_subject = sanitize_env_var(raw_subject)
+    # ASCII가 아닌 모든 문자는 제거
+    safe_subject = raw_subject.encode('ascii', 'ignore').decode('ascii').strip()
     
     msg['Subject'] = safe_subject
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
     
-    # [핵심] 본문을 UTF-8로 강제 인코딩하여 첨부
-    # 이렇게 하면 파이썬이 내용을 ASCII로 해석하려고 시도하지 않습니다.
+    # 본문 UTF-8 강제 지정
     msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
 
     print("Connecting to Gmail Server...")
     print(f"Debug - Final Subject: {safe_subject}")
+    print(f"Debug - Email Sender: {EMAIL_USER}") 
     
     try:
         with smtplib.SMTP(SMTP_SERVER, 587) as server:
             server.starttls()
             server.login(EMAIL_USER, EMAIL_PASSWORD)
-            # as_string()으로 변환하여 전송 (가장 안전한 방식)
             server.send_message(msg)
             print("✅ Email sent successfully!")
     except Exception as e:
