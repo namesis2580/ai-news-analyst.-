@@ -3,7 +3,7 @@ import smtplib
 import feedparser
 import google.generativeai as genai
 from email.message import EmailMessage
-from email.header import Header
+# Header import 제거 (불필요)
 from datetime import datetime
 import time
 import re
@@ -76,7 +76,8 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델 유지 (Gemini 3 Flash Preview)
+        # 모델 유지 (Gemini 3 Flash Preview - 내일 할당량 리셋 시 작동)
+        # ※ 만약 오늘도 테스트하고 싶다면 'gemini-1.5-flash'로 잠시 바꾸셔도 됩니다.
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -130,25 +131,12 @@ def analyze_news(news_list):
         {news_text}
         """
         
-        # 안전 설정을 추가하여 블락 당할 확률을 낮춤 (BLOCK_NONE)
-        # 4만 자의 뉴스 중 전쟁/코인 등의 단어가 있으면 AI가 거부할 수 있는데, 이를 방지함.
+        # 안전 설정
         safety_settings = [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_NONE"
-            },
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ]
 
         response = model.generate_content(
@@ -159,7 +147,6 @@ def analyze_news(news_list):
         return clean_text(response.text)
         
     except Exception as e:
-        # 여기가 핵심입니다. 에러 발생 시 그 원인을 리턴합니다.
         return f"Error in analysis: {e}"
 
 def send_email(report_body):
@@ -168,10 +155,8 @@ def send_email(report_body):
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # Header를 사용하여 제목 인코딩 문제 해결
-    subject_text = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    msg['Subject'] = Header(subject_text, 'utf-8')
-    
+    # [수정 완료] Header 객체 없이 문자열 그대로 할당 (이게 정답입니다)
+    msg['Subject'] = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_RECEIVER
 
@@ -190,14 +175,13 @@ if __name__ == "__main__":
     if news_data:
         report = analyze_news(news_data)
         
-        # [수정] 에러가 발생했는지 확인하고, 내용을 출력합니다.
         if report and "Error" not in report:
             send_email(report)
         else:
             print("\n❌ Report generation failed!")
             print("="*30)
             print("👇 ERROR DETAILS (원인은 아래와 같습니다) 👇")
-            print(report) # 여기서 에러 내용을 화면에 뿌려줍니다.
+            print(report)
             print("="*30)
     else:
         print("No news found.")
