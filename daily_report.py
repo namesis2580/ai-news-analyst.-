@@ -11,28 +11,24 @@ import re
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [핵심] 노이즈 박멸 함수 (가장 먼저 정의) ---
+# --- [핵심] 노이즈 박멸 함수 ---
 def clean_text(text):
     if text is None: return ""
     text = str(text)
     # HTML 태그 제거
     text = re.sub(r'<[^>]+>', '', text) 
-    # 특수문자 및 유령 공백(\xa0) 제거
+    # 특수문자 및 유령 공백(\xa0) 제거 (인코딩 에러 방지)
     text = text.replace('\xa0', ' ').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&gt;', '>').replace('&lt;', '<').replace('&quot;', '"')
     # 여러 공백을 하나로
     text = re.sub(r'\s+', ' ', text) 
     return text.strip()
 
-# --- 환경변수 (여기서 clean_text로 세탁해서 가져옴) ---
-# [수정] 환경변수에 섞여 있을지 모르는 공백(\xa0)을 미리 제거합니다.
+# --- 환경변수 (공백 제거 등 안전장치 추가) ---
 GEMINI_API_KEY = clean_text(os.environ.get("GEMINI_API_KEY"))
 EMAIL_USER = clean_text(os.environ.get("EMAIL_USER"))
-EMAIL_PASSWORD = clean_text(os.environ.get("EMAIL_PASSWORD")) # 비번은 공백 제거 주의 (일반적으로는 strip만 해도 됨)
+# 비밀번호는 특수문자가 있을 수 있으므로 clean_text 대신 strip()만 사용
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
 EMAIL_RECEIVER = clean_text(os.environ.get("EMAIL_RECEIVER"))
-
-# 비밀번호는 clean_text를 쓰면 특수문자가 변형될 수 있으므로 raw data에서 strip만 적용
-if os.environ.get("EMAIL_PASSWORD"):
-    EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD").strip()
 
 # --- [정보 수집 어벤져스] 9개 소스 ---
 RSS_URLS = {
@@ -80,8 +76,7 @@ def analyze_news(news_list):
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
         
-        # 모델: Gemini 3 Flash Preview (유지)
-        # 경고 메시지는 무시해도 됩니다. 아직 v3 프리뷰는 정상 작동합니다.
+        # 모델 유지 (Gemini 3 Flash Preview)
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         
         print("Summoning The Strategic Council (Analysis Avengers)...")
@@ -135,10 +130,36 @@ def analyze_news(news_list):
         {news_text}
         """
         
-        response = model.generate_content(prompt, request_options={"timeout": 1000})
+        # 안전 설정을 추가하여 블락 당할 확률을 낮춤 (BLOCK_NONE)
+        # 4만 자의 뉴스 중 전쟁/코인 등의 단어가 있으면 AI가 거부할 수 있는데, 이를 방지함.
+        safety_settings = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_NONE"
+            },
+        ]
+
+        response = model.generate_content(
+            prompt, 
+            request_options={"timeout": 1000},
+            safety_settings=safety_settings
+        )
         return clean_text(response.text)
         
     except Exception as e:
+        # 여기가 핵심입니다. 에러 발생 시 그 원인을 리턴합니다.
         return f"Error in analysis: {e}"
 
 def send_email(report_body):
@@ -147,7 +168,7 @@ def send_email(report_body):
     msg = EmailMessage()
     msg.set_content(report_body, charset='utf-8')
     
-    # [수정] 제목에 이모지가 들어가면 인코딩 에러가 날 수 있으므로 Header 객체 사용
+    # Header를 사용하여 제목 인코딩 문제 해결
     subject_text = f"🌌 Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg['Subject'] = Header(subject_text, 'utf-8')
     
@@ -168,9 +189,15 @@ if __name__ == "__main__":
     news_data = fetch_news()
     if news_data:
         report = analyze_news(news_data)
+        
+        # [수정] 에러가 발생했는지 확인하고, 내용을 출력합니다.
         if report and "Error" not in report:
             send_email(report)
         else:
-            print("Report generation failed or returned error.")
+            print("\n❌ Report generation failed!")
+            print("="*30)
+            print("👇 ERROR DETAILS (원인은 아래와 같습니다) 👇")
+            print(report) # 여기서 에러 내용을 화면에 뿌려줍니다.
+            print("="*30)
     else:
         print("No news found.")
