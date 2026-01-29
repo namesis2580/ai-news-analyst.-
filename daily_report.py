@@ -19,15 +19,13 @@ def extract_pure_email(text):
     # 1. 모든 유령 공백 제거
     text = "".join(text.split())
     # 2. 정규표현식으로 '이메일 주소 패턴'만 강제 추출
-    # 예: "My Name \xa0 <user@gmail.com>" -> "user@gmail.com"
     match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
     if match:
         return match.group(0)
     else:
-        # 추출 실패 시에도 ASCII가 아닌 건 다 지워서 리턴
         return text.encode('ascii', 'ignore').decode('ascii').strip()
 
-# --- [2단계] 본문 정화 (한글 보존) ---
+# --- [2단계] 본문 정화 ---
 def clean_text_body(text):
     if text is None: return ""
     text = str(text)
@@ -37,10 +35,10 @@ def clean_text_body(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# --- 환경변수 로드 및 수술 집도 ---
+# --- 환경변수 로드 ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# [핵심] 이메일 주소만 쏙 뽑아냅니다.
+# 이메일 주소 추출
 raw_user = os.environ.get("EMAIL_USER", "")
 EMAIL_USER = extract_pure_email(raw_user)
 
@@ -49,7 +47,6 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
 raw_receiver = os.environ.get("EMAIL_RECEIVER", "")
 EMAIL_RECEIVER = extract_pure_email(raw_receiver)
 
-# 디버깅 출력 (로그 확인용)
 print(f"DEBUG: Cleaned EMAIL_USER: {repr(EMAIL_USER)}")
 print(f"DEBUG: Cleaned EMAIL_RECEIVER: {repr(EMAIL_RECEIVER)}")
 
@@ -105,7 +102,7 @@ def analyze_news(news_list):
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
         
-        # [복구 완료] 닥터 둠과 전략 위원회 프롬프트 완전체
+        # 닥터 둠과 전략 위원회 프롬프트
         prompt = f"""
         # 🌌 STRATEGIC COUNCIL: THE AVENGERS PROTOCOL
 
@@ -175,38 +172,42 @@ def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     report_body = clean_text_body(report_body)
     
-    # MIMEMultipart 사용 (안정성 최우선)
     msg = MIMEMultipart()
     
-    # 제목 ASCII 강제 변환
-    raw_subject = f"Strategic Council Report - {datetime.now().strftime('%Y-%m-%d')}"
-    safe_subject = raw_subject.encode('ascii', 'ignore').decode('ascii').strip()
+    # [핵심 수정] 제목을 문자열 복사가 아니라 '조립'합니다.
+    # 이렇게 하면 소스코드 복사 과정에서 유령 공백이 끼어들 틈이 없습니다.
+    # "Strategic Council Report - YYYY-MM-DD"
+    title_parts = ["Strategic", "Council", "Report", "-", datetime.now().strftime('%Y-%m-%d')]
+    safe_subject = " ".join(title_parts)
+    
+    # 한번 더 안전장치: ASCII 강제 변환
+    safe_subject = safe_subject.encode('ascii', 'ignore').decode('ascii').strip()
     
     msg['Subject'] = safe_subject
-    # [중요] 꺾쇠 괄호로 이메일 주소 명확화
-    msg['From'] = f"<{EMAIL_USER}>"
-    msg['To'] = f"<{EMAIL_RECEIVER}>"
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_RECEIVER
     
-    # 본문 UTF-8 강제 지정
     msg.attach(MIMEText(report_body, 'plain', 'utf-8'))
 
     print("Connecting to Gmail Server...")
-    print(f"Debug - Sending From: {msg['From']}")
-    print(f"Debug - Sending To: {msg['To']}")
+    print(f"Debug - Final Subject: {safe_subject}")
     
     try:
-        with smtplib.SMTP(SMTP_SERVER, 587) as server:
-            server.starttls()
-            server.login(EMAIL_USER, EMAIL_PASSWORD)
-            server.send_message(msg)
-            print("✅ Email sent successfully!")
+        # [디버깅] SMTP 통신 과정을 로그에 출력 (문제 발생 시 원인 파악용)
+        server = smtplib.SMTP(SMTP_SERVER, 587)
+        server.set_debuglevel(1) # 로그 상세 출력 켜기
+        
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print("✅ Email sent successfully!")
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
 
 if __name__ == "__main__":
     news_data = fetch_news()
     if news_data:
-        # 뉴스 데이터가 있으면 분석 시작
         report = analyze_news(news_data)
         
         if report and "Error" not in report:
