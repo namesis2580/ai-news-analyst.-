@@ -6,33 +6,38 @@ from datetime import datetime
 import time
 import re
 import unicodedata
-import traceback  # [추가] 상세 에러 추적을 위한 모듈
+import traceback
 
 # --- [설정] Gmail 서버 ---
 SMTP_SERVER = "smtp.gmail.com"
 
-# --- [0단계] 철저한 무균실 세탁 함수 ---
+# --- [0단계] 무균실 세탁 함수 ---
 def forensic_clean(text, var_name):
     if text is None: return ""
     text = str(text)
-    
-    print(f"--- Checking {var_name} ---")
-    # 원본 상태에서 이상한 문자가 있는지 헥사값으로 확인
-    dirty_chars = [f"{i}:{c}({hex(ord(c))})" for i, c in enumerate(text) if ord(c) > 127]
-    if dirty_chars:
-        print(f"⚠️ WARN: Found non-ASCII chars in {var_name}: {dirty_chars}")
     
     # 1. 유니코드 정규화
     text = unicodedata.normalize('NFKC', text)
     # 2. 유령 공백 제거
     text = text.replace('\xa0', '').replace('\u200b', '')
-    # 3. ASCII가 아닌 모든 문자 강제 삭제 (화이트리스트 방식)
-    # 영어, 숫자, 기본 기호(@, ., _, -)만 남김
-    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@._-"
-    clean_text = "".join([c for c in text if c in allowed])
     
-    print(f"✅ Cleaned {var_name}: '{clean_text}' (Len: {len(clean_text)})")
-    return clean_text
+    # 3. [핵심] ASCII가 아닌 문자는 무조건 삭제
+    # (비밀번호에 한글이나 특수 유니코드가 들어갈 일은 없습니다)
+    try:
+        text = text.encode('ascii', 'ignore').decode('ascii')
+    except Exception:
+        pass
+    
+    # 4. 공백 제거 (양옆)
+    text = text.strip()
+    
+    # [로그] 비밀번호는 보안상 내용 대신 길이만 출력
+    if "PASSWORD" in var_name:
+        print(f"✅ Cleaned {var_name}: (Hidden) [Length: {len(text)}]")
+    else:
+        print(f"✅ Cleaned {var_name}: '{text}' (Len: {len(text)})")
+        
+    return text
 
 def clean_text_body(text):
     if text is None: return ""
@@ -42,12 +47,12 @@ def clean_text_body(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# --- [1단계] 환경변수 로드 및 검증 ---
+# --- [1단계] 환경변수 로드 (비밀번호 포함 전체 세탁) ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# 여기서 바로 세탁 들어갑니다.
+# [수정] 비밀번호 변수도 forensic_clean으로 감쌌습니다.
 EMAIL_USER = forensic_clean(os.environ.get("EMAIL_USER", ""), "EMAIL_USER")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "").strip()
+EMAIL_PASSWORD = forensic_clean(os.environ.get("EMAIL_PASSWORD", ""), "EMAIL_PASSWORD") 
 EMAIL_RECEIVER = forensic_clean(os.environ.get("EMAIL_RECEIVER", ""), "EMAIL_RECEIVER")
 
 # --- [정보 수집] ---
@@ -89,6 +94,7 @@ def analyze_news(news_list):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         news_text = "\n".join(news_list)
+        # Gemini 3.0 모델
         model = genai.GenerativeModel('gemini-3-flash-preview') 
         print("Summoning The Strategic Council (Analysis Avengers)...")
         print(f"Input Data Length: {len(news_text)} characters") 
@@ -152,13 +158,12 @@ def analyze_news(news_list):
         response = model.generate_content(prompt, request_options={"timeout": 1000}, safety_settings=safety_settings)
         return clean_text_body(response.text)
     except Exception as e:
-        # 에러 발생 시 상세 정보 반환
         return f"Error in analysis: {e}\n{traceback.format_exc()}"
 
 def send_email(report_body):
     print(f"Preparing email via {SMTP_SERVER}...")
     
-    # 1. 제목 생성 (언더바 사용)
+    # 1. 제목 생성
     safe_date = datetime.now().strftime('%Y-%m-%d')
     subject = f"Strategic_Council_Report_{safe_date}"
     
@@ -173,27 +178,25 @@ Content-Transfer-Encoding: 8bit
 {report_body}
 """
     
-    # [진단] 전송 직전 데이터 최종 확인
     print("--- PRE-FLIGHT CHECK ---")
-    print(f"Sender: '{EMAIL_USER}' (ASCII ONLY: {EMAIL_USER.isascii()})")
-    print(f"Receiver: '{EMAIL_RECEIVER}' (ASCII ONLY: {EMAIL_RECEIVER.isascii()})")
-    print(f"Subject: '{subject}' (ASCII ONLY: {subject.isascii()})")
-    
-    # 만약 여기서 ASCII가 아니라면 강제로 에러를 발생시켜서 멈춥니다. (어설프게 보내지 않음)
-    if not EMAIL_USER.isascii() or not EMAIL_RECEIVER.isascii():
-        raise ValueError("FATAL ERROR: Email address still contains non-ASCII characters!")
+    print(f"Sender: '{EMAIL_USER}' (ASCII: {EMAIL_USER.isascii()})")
+    print(f"Receiver: '{EMAIL_RECEIVER}' (ASCII: {EMAIL_RECEIVER.isascii()})")
+    # 비밀번호는 체크만 하고 출력은 안 함
+    print(f"Password Check: (ASCII: {EMAIL_PASSWORD.isascii()})")
+
+    if not EMAIL_PASSWORD.isascii():
+        print("❌ CRITICAL: Password contains non-ASCII characters! Cleaning failed.")
 
     print("Connecting to Gmail Server...")
 
     try:
-        # local_hostname 지정으로 헬로 메시지 이슈 차단
         server = smtplib.SMTP(SMTP_SERVER, 587, local_hostname='localhost')
-        server.set_debuglevel(1) # [중요] SMTP 서버와의 통신 내역을 전부 출력
+        server.set_debuglevel(1) 
         
         server.starttls()
+        # [핵심] 씻어낸 비밀번호로 로그인
         server.login(EMAIL_USER, EMAIL_PASSWORD)
         
-        # [최종] 바이트 전송
         server.sendmail(EMAIL_USER, EMAIL_RECEIVER, email_content.encode('utf-8'))
         
         server.quit()
@@ -201,7 +204,6 @@ Content-Transfer-Encoding: 8bit
         
     except Exception:
         print("\n❌ FATAL ERROR in send_email:")
-        # [핵심] 여기서 에러의 전체 족보(Stack Trace)를 출력합니다.
         traceback.print_exc()
 
 if __name__ == "__main__":
